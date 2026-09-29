@@ -20,9 +20,29 @@ struct PaywallView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
-            if entitlementService.products.isEmpty {
+            if let preview = PaywallScreenshot.current {
+                Button {} label: {
+                    HStack {
+                        Text(preview.name)
+                        Spacer()
+                        Text(preview.price)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.horizontal, 32)
+                .padding(.top, 16)
+            } else if entitlementService.isLoadingProducts {
                 ProgressView()
                     .padding(.top, 24)
+            } else if entitlementService.products.isEmpty {
+                Button("Try Again") {
+                    Task { await entitlementService.loadProducts() }
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 24)
             } else {
                 VStack(spacing: 12) {
                     ForEach(entitlementService.products) { product in

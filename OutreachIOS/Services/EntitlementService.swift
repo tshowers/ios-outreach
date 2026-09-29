@@ -12,6 +12,9 @@ final class EntitlementService: ObservableObject {
     @Published private(set) var isLoadingEntitlement = true
     @Published private(set) var products: [Product] = []
     @Published private(set) var isPurchasing = false
+    /// True while the App Store is asked for the subscription - the paywall
+    /// shows a spinner only then, never forever.
+    @Published private(set) var isLoadingProducts = false
     @Published var errorMessage: String?
 
     private let apiClient: OutreachAPIClient
@@ -27,10 +30,12 @@ final class EntitlementService: ObservableObject {
         self.config = config
         self.lastSeenUserId = authService.userId
 
-        transactionObserverTask = TransactionObserver.start { [weak self] _ in
+        transactionObserverTask = TransactionObserver.startSigned { [weak self] signed in
+            // Forward renewals/approvals so the backend doesn't depend on
+            // Apple's notification alone, then refresh.
+            await self?.submit(signed)
             await self?.refreshEntitlement()
         }
-
         authSubscription = authService.$currentUser
             .map { $0?.uid }
             .removeDuplicates()
@@ -57,13 +62,22 @@ final class EntitlementService: ObservableObject {
     }
 
     func loadProducts() async {
+        if PaywallScreenshot.current != nil { return }
         guard !configuredProductIds.isEmpty else {
             errorMessage = "Outreach's App Store subscription isn't configured yet."
             return
         }
 
+        isLoadingProducts = true
+        errorMessage = nil
+        defer { isLoadingProducts = false }
         do {
             products = try await PurchaseManager.fetchProducts(productIds: configuredProductIds)
+            if products.isEmpty {
+                // StoreKit returns nothing (no error) while the subscription
+                // isn't ready in App Store Connect.
+                errorMessage = "The Outreach subscription isn't available from the App Store yet. Please try again later."
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -75,6 +89,11 @@ final class EntitlementService: ObservableObject {
 
         do {
             isEntitled = try await apiClient.fetchAppStoreEntitlement().active
+            if !isEntitled {
+                // The backend may not know about a purchase this Apple ID
+                // already made - hand it any active subscriptions StoreKit has.
+                isEntitled = await syncCurrentEntitlements()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -89,8 +108,13 @@ final class EntitlementService: ObservableObject {
         do {
             let token = Self.appAccountToken(for: uid)
             try await apiClient.linkAppStorePurchase(appAccountToken: token.uuidString)
-            try await PurchaseManager.purchase(product, appAccountToken: token)
-            await refreshEntitlement()
+            let signed = try await PurchaseManager.purchaseSigned(product, appAccountToken: token)
+            // Unlock from the backend's verification of this exact purchase.
+            if let entitlement = await submit(signed), entitlement.active {
+                isEntitled = true
+            } else {
+                await refreshEntitlement()
+            }
         } catch PurchaseError.userCancelled {
             // Not an error worth surfacing.
         } catch {
@@ -105,10 +129,29 @@ final class EntitlementService: ObservableObject {
 
         do {
             try await PurchaseManager.restorePurchases()
-            await refreshEntitlement()
+            isEntitled = await syncCurrentEntitlements()
+            if !isEntitled { await refreshEntitlement() }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Sends a signed transaction for verification; nil if it couldn't be
+    /// recorded (e.g. it belongs to a different TODD account).
+    @discardableResult
+    private func submit(_ signed: SignedTransaction) async -> AppStoreEntitlement? {
+        try? await apiClient.submitAppStoreTransaction(signedTransaction: signed.jwsRepresentation)
+    }
+
+    /// Submits every active subscription StoreKit has for this Apple ID.
+    private func syncCurrentEntitlements() async -> Bool {
+        var entitled = false
+        for signed in await PurchaseManager.currentSignedEntitlements(productIds: configuredProductIds) {
+            if let entitlement = await submit(signed), entitlement.active {
+                entitled = true
+            }
+        }
+        return entitled
     }
 
     private static func appAccountToken(for uid: String) -> UUID {

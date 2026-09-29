@@ -2,11 +2,13 @@ import SwiftUI
 import FirebaseAuth
 import FirebaseCore
 import TODDAuthKit
+import TODDAwardsKit
 
 @main
 struct OutreachIOSApp: App {
     @StateObject private var authService: AuthService
     @StateObject private var entitlementService: EntitlementService
+    @StateObject private var awardsService: AwardsService
     private let apiClient: OutreachAPIClient
 
     init() {
@@ -19,6 +21,7 @@ struct OutreachIOSApp: App {
         let config = AppConfig.fromBundle()
         let authService = AuthService()
         _authService = StateObject(wrappedValue: authService)
+        _awardsService = StateObject(wrappedValue: OutreachAwards.makeService(authService: authService))
         let apiClient = OutreachAPIClient(config: config, authService: authService)
         self.apiClient = apiClient
         _entitlementService = StateObject(wrappedValue: EntitlementService(
@@ -30,10 +33,14 @@ struct OutreachIOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(authService: authService, entitlementService: entitlementService, apiClient: apiClient)
-                .onOpenURL { url in
-                    _ = GoogleSignInHelper.handle(url)
-                }
+            if PaywallScreenshot.current != nil {
+                PaywallView(entitlementService: entitlementService, onSignOut: {})
+            } else {
+                RootView(authService: authService, entitlementService: entitlementService, apiClient: apiClient, awardsService: awardsService)
+                    .onOpenURL { url in
+                        _ = GoogleSignInHelper.handle(url)
+                    }
+            }
         }
     }
 }

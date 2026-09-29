@@ -7,6 +7,10 @@ configs:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: tech.taliferro.outreachios
+    # Real device builds need a real team for the Associated Domains
+    # capability (Universal Links) to actually provision - matches
+    # taliferro-music-native's team.
+    DEVELOPMENT_TEAM: "6377FLHLAG"
     IPHONEOS_DEPLOYMENT_TARGET: 17.0
     SWIFT_VERSION: 5.0
 packages:
@@ -17,6 +21,10 @@ packages:
     path: ../TODDAuthKit
   TODDEntitlementKit:
     path: ../TODDEntitlementKit
+  TODDProfileKit:
+    path: ../TODDProfileKit
+  TODDAwardsKit:
+    path: ../TODDAwardsKit
 targets:
   OutreachIOS:
     type: application
@@ -26,21 +34,41 @@ targets:
     settings:
       base:
         PRODUCT_NAME: OutreachIOS
+        # App Store version (MARKETING_VERSION) and build number
+        # (CURRENT_PROJECT_VERSION). Bump the build number for every upload
+        # to App Store Connect - it must be higher than the last one.
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "4"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         OUTREACH_API_BASE_URL: https://api.taliferro.tech/api
-        # Set once Outreach's subscription product exists in App Store
-        # Connect (see docs/app-store-exclusive-billing-plan.md) - empty is
-        # expected until then; EntitlementService treats it as "not
-        # configured yet".
-        OUTREACH_APP_STORE_PRODUCT_ID: ""
+        # The "Outreach Subscription" monthly subscription in App Store
+        # Connect (group OutreachSub).
+        OUTREACH_APP_STORE_PRODUCT_ID: Outreach10001
     info:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: Outreach
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Only standard HTTPS (exempt) - App Store Connect won't hold builds
+        # for the export compliance question.
+        ITSAppUsesNonExemptEncryption: false
+        # Required for Face ID - without it iOS can refuse the biometric
+        # check and the unlock screen never completes.
+        NSFaceIDUsageDescription: Outreach uses Face ID to keep your email activity private when you open the app.
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+        # App Store validation rejects an iPad-capable build with no
+        # orientations; iPad multitasking requires all four.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         OUTREACH_API_BASE_URL: $(OUTREACH_API_BASE_URL)
         OUTREACH_APP_STORE_PRODUCT_ID: $(OUTREACH_APP_STORE_PRODUCT_ID)
         # Native Google Sign-In's redirect callback scheme - the
@@ -55,6 +83,10 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
+        # Universal Links: see network-ios's project.yml for the full
+        # explanation - same mechanism, this app's own domain.
+        com.apple.developer.associated-domains:
+          - applinks:outreach.taliferro.tech
     dependencies:
       - package: FirebaseiOS
         product: FirebaseAuth
@@ -62,5 +94,7 @@ targets:
         product: FirebaseFirestore
       - package: TODDAuthKit
       - package: TODDEntitlementKit
+      - package: TODDProfileKit
+      - package: TODDAwardsKit
     scheme:
       testTargets: []

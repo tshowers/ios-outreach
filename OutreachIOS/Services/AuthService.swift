@@ -2,6 +2,7 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 import TODDAuthKit
+import TODDProfileKit
 
 /// Mirrors `frontend/src/app/services/auth.service.ts`'s `resolveAssignedTenantId`
 /// - Outreach's email activity is shared, tenant-scoped team data, so this
@@ -24,6 +25,10 @@ final class AuthService: ObservableObject {
             self.isLoading = false
             self.sessionGate.handleAuthStateChange(hasUser: user != nil)
             Task { await self.refreshTenantId() }
+            // Retries a wizard save that failed on a previous launch.
+            if user != nil {
+                Task { await self.submitOnboardingIfNeeded() }
+            }
         }
     }
 
@@ -68,6 +73,23 @@ final class AuthService: ObservableObject {
 
         let decoded = try JSONDecoder().decode(BootstrapResponse.self, from: data)
         tenantId = decoded.tenantId
+        await submitOnboardingIfNeeded()
+    }
+
+    /// Where the pre-sign-in wizard keeps the user's name until sign-in.
+    static let profileStore = OnboardingProfileStore(storageKey: "outreach.onboardingProfile", source: "outreach-ios")
+
+    /// Saves the wizard's name to the TODD profile (blank fields only).
+    /// Best-effort; retries next launch if it fails. The inbox isn't
+    /// connected here - ConnectInboxView does that after sign-in.
+    func submitOnboardingIfNeeded() async {
+        guard currentUser != nil else { return }
+        let baseURL = AppConfig.fromBundle().apiBaseURL
+        let idToken: @Sendable () async throws -> String = { [weak self] in
+            guard let self else { throw AuthServiceError.notSignedIn }
+            return try await self.freshIdToken()
+        }
+        await Self.profileStore.submitIfReady(baseURL: baseURL, idToken: idToken)
     }
 
     private func refreshTenantId() async {

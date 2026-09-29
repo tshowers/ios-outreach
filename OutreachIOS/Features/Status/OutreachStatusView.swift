@@ -1,5 +1,7 @@
 import SwiftUI
 import TODDAuthKit
+import TODDAwardsKit
+import TODDProfileKit
 
 /// The default screen on login for Outreach - the one exception to the
 /// "list first, Status in the menu" pattern every other app (Network,
@@ -15,8 +17,14 @@ import TODDAuthKit
 struct OutreachStatusView: View {
     @StateObject private var viewModel: OutreachStatusViewModel
     @ObservedObject var authService: AuthService
+    @ObservedObject var awardsService: AwardsService
     let apiClient: OutreachAPIClient
     @State private var isShowingMessagesSent = false
+    /// Getting Started / Profile / Awards - see AccountView.
+    @State private var isShowingAccount = false
+    @State private var accountStart: AccountPage?
+    /// The inbox picked in the pre-sign-in wizard, waiting to be connected.
+    @State private var isShowingConnectInbox = false
     @State private var isShowingLogoutConfirmation = false
     @State private var isOpeningWebHandoff = false
     @State private var webHandoffErrorMessage: String?
@@ -24,11 +32,9 @@ struct OutreachStatusView: View {
     private static let outreachHost = URL(string: "https://outreach.taliferro.tech")!
     private static let toddHost = URL(string: "https://todd.taliferro.tech")!
 
-    /// Every destination reachable from Outreach's account menu via the
-    /// shared `TODDAuthKit.WebHandoff` real-token handoff - opens already
-    /// signed in, no second login. Mixes both taliferro.tech domains since
-    /// the handoff works across any custom domain on the same Firebase
-    /// project (the custom token isn't domain-scoped).
+    /// Web pages reachable from the account menu via the shared
+    /// `TODDAuthKit.WebHandoff` real-token handoff - opens already signed
+    /// in, no second login. Profile is in-app now (AccountView).
     private static let webHandoffMenuItems: [(title: String, icon: String, path: String, host: URL)] = [
         (title: "Home", icon: "house", path: "/", host: outreachHost),
         (title: "Growth", icon: "chart.line.uptrend.xyaxis", path: "/app", host: outreachHost),
@@ -36,14 +42,14 @@ struct OutreachStatusView: View {
         (title: "Outbox", icon: "paperplane.circle", path: "/signal-engine", host: outreachHost),
         (title: "Catalyst", icon: "bolt.badge.clock", path: "/email-processor", host: outreachHost),
         (title: "Email Composer", icon: "square.and.pencil", path: "/compose-email", host: outreachHost),
+        (title: "Help", icon: "questionmark.circle", path: "/help", host: outreachHost),
         (title: "Daily Momentum", icon: "flame", path: "/daily-momentum", host: toddHost),
-        (title: "Profile", icon: "person.crop.circle", path: "/user-profile", host: toddHost),
-        (title: "Help", icon: "questionmark.circle", path: "/help", host: toddHost),
     ]
 
-    init(apiClient: OutreachAPIClient, authService: AuthService) {
+    init(apiClient: OutreachAPIClient, authService: AuthService, awardsService: AwardsService) {
         self.apiClient = apiClient
         self.authService = authService
+        self.awardsService = awardsService
         _viewModel = StateObject(wrappedValue: OutreachStatusViewModel(apiClient: apiClient))
     }
 
@@ -65,24 +71,44 @@ struct OutreachStatusView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        ForEach(Self.webHandoffMenuItems, id: \.title) { item in
-                            Button {
-                                openWebHandoff(path: item.path, host: item.host)
-                            } label: {
-                                Label(item.title, systemImage: item.icon)
-                            }
-                            .disabled(isOpeningWebHandoff)
+                        // In-app pages first; web pages grouped under their
+                        // own header so it's clear which ones leave the app.
+                        Button {
+                            openAccount(.gettingStarted)
+                        } label: {
+                            Label("Getting Started", systemImage: "checklist")
                         }
-                        Divider()
+                        Button {
+                            openAccount(.profile)
+                        } label: {
+                            Label("Profile", systemImage: "person.crop.circle")
+                        }
+                        Button {
+                            openAccount(.awards)
+                        } label: {
+                            Label("Awards", systemImage: "rosette")
+                        }
                         Button {
                             isShowingMessagesSent = true
                         } label: {
                             Label("Messages Sent", systemImage: "paperplane")
                         }
-                        Button(role: .destructive) {
-                            isShowingLogoutConfirmation = true
-                        } label: {
-                            Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        Section("Opens outreach.taliferro.tech") {
+                            ForEach(Self.webHandoffMenuItems, id: \.title) { item in
+                                Button {
+                                    openWebHandoff(path: item.path, host: item.host)
+                                } label: {
+                                    Label(item.title, systemImage: item.icon)
+                                }
+                                .disabled(isOpeningWebHandoff)
+                            }
+                        }
+                        Section {
+                            Button(role: .destructive) {
+                                isShowingLogoutConfirmation = true
+                            } label: {
+                                Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
                         }
                     } label: {
                         Label("Account", systemImage: "person.crop.circle")
@@ -92,7 +118,44 @@ struct OutreachStatusView: View {
                 }
             }
             .refreshable { await viewModel.load() }
-            .task { await viewModel.load() }
+            .task {
+                await viewModel.load()
+                await checkAwards()
+                // Came through the wizard: connect that inbox first;
+                // Getting Started follows once it's closed.
+                if InboxDraft.load().isPendingConnect {
+                    isShowingConnectInbox = true
+                    return
+                }
+                // Open the checklist once per launch while steps remain,
+                // unless the user switched it off there.
+                if await GettingStartedStartup.shouldAutoShow(
+                    api: AccountView.gettingStartedAPI(authService: authService),
+                    showAtStartupKey: AccountView.showAtStartupKey
+                ) {
+                    openAccount(.gettingStarted)
+                }
+            }
+            .fullScreenCover(isPresented: $isShowingAccount, onDismiss: {
+                // Steps get done from here - the likeliest moment for new awards.
+                Task { await checkAwards() }
+            }) {
+                AccountView(start: accountStart, authService: authService, awardsService: awardsService) { path, host in
+                    openWebHandoff(path: path, host: host)
+                }
+            }
+            .fullScreenCover(isPresented: $isShowingConnectInbox, onDismiss: {
+                // Next: the checklist (it shows the inbox once connected).
+                Task {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    openAccount(.gettingStarted)
+                }
+            }) {
+                ConnectInboxView(
+                    onConnect: { path in openWebHandoff(path: path, host: Self.outreachHost) },
+                    onFinished: { isShowingConnectInbox = false }
+                )
+            }
             .sheet(isPresented: $isShowingMessagesSent) {
                 EmailActivityListView(apiClient: apiClient)
             }
@@ -109,6 +172,17 @@ struct OutreachStatusView: View {
             } message: {
                 Text(webHandoffErrorMessage ?? "")
             }
+        }
+    }
+
+    private func openAccount(_ page: AccountPage?) {
+        accountStart = page
+        isShowingAccount = true
+    }
+
+    private func checkAwards() async {
+        if let progress = try? await apiClient.fetchProgress() {
+            awardsService.recordProgress(progress)
         }
     }
 

@@ -44,10 +44,27 @@ final class OutreachAPIClient {
         return try decoder.decode(SignalEngineBootstrapEnvelope.self, from: data).data.summary
     }
 
+    func fetchProgress() async throws -> OutreachProgress {
+        let url = config.apiBaseURL.appending(path: "getting-started/outreach")
+        let data = try await authorizedRequest(method: "GET", url: url)
+        return try decoder.decode(OutreachProgressEnvelope.self, from: data).data
+    }
+
     func linkAppStorePurchase(appAccountToken: String) async throws {
         let payload = AppStoreLinkRequest(appAccountToken: appAccountToken, productKey: "outreach")
         let url = config.apiBaseURL.appending(path: "app-store/link")
         _ = try await authorizedRequest(method: "POST", url: url, body: try encoder.encode(payload))
+    }
+
+    /// Sends a StoreKit transaction's signed JWS right after a purchase or
+    /// restore; the backend verifies Apple's signature and returns the fresh
+    /// entitlement - an immediate unlock that doesn't depend on Apple's
+    /// server notification.
+    func submitAppStoreTransaction(signedTransaction: String) async throws -> AppStoreEntitlement {
+        let url = config.apiBaseURL.appending(path: "app-store/transactions/outreach")
+        let body = try encoder.encode(AppStoreTransactionRequest(signedTransaction: signedTransaction))
+        let data = try await authorizedRequest(method: "POST", url: url, body: body)
+        return try decoder.decode(AppStoreEntitlementEnvelope.self, from: data).entitlement
     }
 
     func fetchAppStoreEntitlement() async throws -> AppStoreEntitlement {
