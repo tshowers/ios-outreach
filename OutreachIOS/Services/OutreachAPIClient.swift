@@ -4,6 +4,9 @@ enum OutreachAPIError: LocalizedError {
     case notAuthenticated
     case invalidResponse
     case httpError(Int)
+    /// The backend's own explanation (its JSON `message`), e.g. "Mailbox
+    /// app password required" - clearer than a status code.
+    case server(Int, String)
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +16,8 @@ enum OutreachAPIError: LocalizedError {
             return "The server response could not be understood."
         case .httpError(let code):
             return "The server returned HTTP \(code)."
+        case .server(_, let message):
+            return message
         }
     }
 }
@@ -73,6 +78,73 @@ final class OutreachAPIClient {
         return try decoder.decode(AppStoreEntitlementEnvelope.self, from: data).entitlement
     }
 
+    // MARK: - Inbox (outreachMobileRoutes.js /mobile/outreach/mailboxes)
+
+    func fetchMailboxes() async throws -> [MailboxSummary] {
+        let data = try await authorizedRequest(method: "GET", url: mailboxURL())
+        return try decoder.decode(DataEnvelope<[MailboxSummary]>.self, from: data).data
+    }
+
+    func fetchMessages(mailboxId: String, limit: Int = 50) async throws -> [MailboxMessage] {
+        var url = mailboxURL(mailboxId, "messages")
+        url.append(queryItems: [URLQueryItem(name: "limit", value: String(limit))])
+        let data = try await authorizedRequest(method: "GET", url: url)
+        return try decoder.decode(DataEnvelope<[MailboxMessage]>.self, from: data).data
+    }
+
+    func fetchMessage(mailboxId: String, messageId: String) async throws -> MailboxMessage {
+        let data = try await authorizedRequest(method: "GET", url: mailboxURL(mailboxId, "messages", messageId))
+        return try decoder.decode(DataEnvelope<MailboxMessage>.self, from: data).data
+    }
+
+    func syncMailbox(mailboxId: String) async throws {
+        _ = try await authorizedRequest(method: "POST", url: mailboxURL(mailboxId, "sync"), body: Data("{}".utf8))
+    }
+
+    func setPrimaryMailbox(mailboxId: String) async throws {
+        _ = try await authorizedRequest(method: "POST", url: mailboxURL(mailboxId, "set-primary"), body: Data("{}".utf8))
+    }
+
+    func reply(mailboxId: String, messageId: String, subject: String, body: String) async throws {
+        let payload = try encoder.encode(MailboxReplyRequest(subject: subject, body: body, text: body))
+        _ = try await authorizedRequest(method: "POST", url: mailboxURL(mailboxId, "messages", messageId, "reply"), body: payload)
+    }
+
+    func deleteMessage(mailboxId: String, messageId: String) async throws {
+        _ = try await authorizedRequest(method: "DELETE", url: mailboxURL(mailboxId, "messages", messageId))
+    }
+
+    func disconnectMailbox(mailboxId: String) async throws {
+        _ = try await authorizedRequest(method: "DELETE", url: mailboxURL(mailboxId))
+    }
+
+    /// Checks the address and app password work (IMAP and SMTP) without saving.
+    func testMailbox(_ request: MailboxConnectRequest) async throws {
+        _ = try await authorizedRequest(method: "POST", url: mailboxURL("test"), body: try encoder.encode(request))
+    }
+
+    @discardableResult
+    func saveMailbox(_ request: MailboxConnectRequest) async throws -> MailboxSummary {
+        let data = try await authorizedRequest(method: "POST", url: mailboxURL(), body: try encoder.encode(request))
+        return try decoder.decode(DataEnvelope<MailboxSummary>.self, from: data).data
+    }
+
+    /// Google's approval page; it returns to the app
+    /// (`tech.taliferro.outreachios://mailbox-connected?status=...`).
+    func startGoogleMailboxConnection() async throws -> URL {
+        let body = try encoder.encode(["client": "ios"])
+        let data = try await authorizedRequest(method: "POST", url: mailboxURL("oauth", "google", "start"), body: body)
+        let start = try decoder.decode(DataEnvelope<GoogleMailboxStart>.self, from: data).data
+        guard let url = URL(string: start.url) else { throw OutreachAPIError.invalidResponse }
+        return url
+    }
+
+    private func mailboxURL(_ components: String...) -> URL {
+        components.reduce(config.apiBaseURL.appending(path: "mobile/outreach/mailboxes")) { url, component in
+            url.appending(path: component)
+        }
+    }
+
     // MARK: - Request building
 
     private func authorizedRequest(method: String, url: URL, body: Data? = nil) async throws -> Data {
@@ -91,6 +163,9 @@ final class OutreachAPIClient {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
+            if let message = (try? JSONDecoder().decode(ServerMessage.self, from: data))?.message, !message.isEmpty {
+                throw OutreachAPIError.server(httpResponse.statusCode, message)
+            }
             throw OutreachAPIError.httpError(httpResponse.statusCode)
         }
 

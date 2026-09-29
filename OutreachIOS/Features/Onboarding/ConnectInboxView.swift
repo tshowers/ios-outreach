@@ -1,13 +1,13 @@
 import SwiftUI
 
 /// Shown right after sign-in when the wizard picked an inbox: one tap opens
-/// outreach.taliferro.tech's Inbox Access page already signed in and
-/// pre-filled with the address - Gmail connects with Google there, other
-/// providers take an app password on that signed-in page. The password is
-/// never typed into the pre-sign-in wizard or stored on the device.
+/// the in-app Connect page pre-filled with the address - Gmail connects
+/// through Google's approval page, other providers take an app password on
+/// that signed-in page. The password is never typed into the pre-sign-in
+/// wizard or stored on the device.
 /// "Not now" keeps the draft for next launch.
 struct ConnectInboxView: View {
-    let onConnect: (_ path: String) -> Void
+    let onConnect: (_ draft: InboxDraft) -> Void
     let onFinished: () -> Void
     @State private var draft = InboxDraft.load()
 
@@ -38,9 +38,10 @@ struct ConnectInboxView: View {
                     .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color(.separator), lineWidth: 1))
 
                     Button {
-                        onConnect(draft.inboxAccessPath)
+                        let picked = draft
                         InboxDraft.clear()
                         onFinished()
+                        onConnect(picked)
                     } label: {
                         Text(draft.provider == .gmail ? "Connect with Google" : "Connect \(draft.provider.label)")
                             .font(.headline)
@@ -49,7 +50,7 @@ struct ConnectInboxView: View {
                             .background(OutreachTheme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .foregroundStyle(.white)
                     }
-                    Text("Opens outreach.taliferro.tech, already signed in.")
+                    Text(draft.provider == .gmail ? "Google asks you to approve access once - that's separate from signing in." : "You'll paste an app password on the next screen.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)

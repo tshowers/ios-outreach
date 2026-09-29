@@ -25,6 +25,8 @@ struct OutreachStatusView: View {
     @State private var accountStart: AccountPage?
     /// The inbox picked in the pre-sign-in wizard, waiting to be connected.
     @State private var isShowingConnectInbox = false
+    /// Inbox, messages and connecting are pushed pages (no sheets).
+    @State private var path: [OutreachRoute] = []
     @State private var isShowingLogoutConfirmation = false
     @State private var isOpeningWebHandoff = false
     @State private var webHandoffErrorMessage: String?
@@ -38,7 +40,6 @@ struct OutreachStatusView: View {
     private static let webHandoffMenuItems: [(title: String, icon: String, path: String, host: URL)] = [
         (title: "Home", icon: "house", path: "/", host: outreachHost),
         (title: "Growth", icon: "chart.line.uptrend.xyaxis", path: "/app", host: outreachHost),
-        (title: "Inbox", icon: "tray", path: "/inbox-access", host: outreachHost),
         (title: "Outbox", icon: "paperplane.circle", path: "/signal-engine", host: outreachHost),
         (title: "Catalyst", icon: "bolt.badge.clock", path: "/email-processor", host: outreachHost),
         (title: "Email Composer", icon: "square.and.pencil", path: "/compose-email", host: outreachHost),
@@ -54,7 +55,7 @@ struct OutreachStatusView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if let summary = viewModel.summary {
                     dashboard(summary)
@@ -73,6 +74,11 @@ struct OutreachStatusView: View {
                     Menu {
                         // In-app pages first; web pages grouped under their
                         // own header so it's clear which ones leave the app.
+                        Button {
+                            path = [.inbox]
+                        } label: {
+                            Label("Inbox", systemImage: "tray")
+                        }
                         Button {
                             openAccount(.gettingStarted)
                         } label: {
@@ -144,17 +150,32 @@ struct OutreachStatusView: View {
                     openWebHandoff(path: path, host: host)
                 }
             }
-            .fullScreenCover(isPresented: $isShowingConnectInbox, onDismiss: {
-                // Next: the checklist (it shows the inbox once connected).
-                Task {
-                    try? await Task.sleep(for: .milliseconds(400))
-                    openAccount(.gettingStarted)
-                }
-            }) {
+            .fullScreenCover(isPresented: $isShowingConnectInbox) {
                 ConnectInboxView(
-                    onConnect: { path in openWebHandoff(path: path, host: Self.outreachHost) },
+                    onConnect: { draft in
+                        // Connect in the app: Inbox, then the connect page
+                        // pre-filled with the wizard's address.
+                        path = [.inbox, .connect(email: draft.trimmedEmail, provider: draft.provider)]
+                    },
                     onFinished: { isShowingConnectInbox = false }
                 )
+            }
+            .navigationDestination(for: OutreachRoute.self) { route in
+                switch route {
+                case .inbox:
+                    InboxView(apiClient: apiClient, defaultEmail: authService.userEmail ?? "", path: $path)
+                case .message(let mailboxId, let messageId):
+                    MessageDetailView(apiClient: apiClient, mailboxId: mailboxId, messageId: messageId)
+                case .connect(let email, let provider):
+                    ConnectMailboxView(apiClient: apiClient, email: email, provider: provider) {
+                        Task { await checkAwards() }
+                        // Back to the inbox, which reloads and shows it.
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(900))
+                            if path.last != .inbox { path = [.inbox] }
+                        }
+                    }
+                }
             }
             .sheet(isPresented: $isShowingMessagesSent) {
                 EmailActivityListView(apiClient: apiClient)
@@ -210,6 +231,28 @@ struct OutreachStatusView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 commandDeck(summary)
+
+                Button {
+                    path = [.inbox]
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "tray.full.fill")
+                            .font(.title2)
+                            .foregroundStyle(OutreachTheme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Inbox").font(.headline)
+                            Text("See who replied, read it, and answer from your own email.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }
+                    .padding(18)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+                .buttonStyle(.plain)
 
                 panel("Pipeline") {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
