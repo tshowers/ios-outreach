@@ -3,7 +3,7 @@ import TODDAwardsKit
 import TODDProfileKit
 
 enum AccountPage: Hashable {
-    case gettingStarted, profile, awards
+    case gettingStarted, profile, awards, notifications
 }
 
 /// Full-screen account area (like Outreach's Status
@@ -13,6 +13,7 @@ enum AccountPage: Hashable {
 /// list, Done returns to the dashboard.
 struct AccountView: View {
     let authService: AuthService
+    let apiClient: OutreachAPIClient
     @ObservedObject var awardsService: AwardsService
     let onOpenWeb: (_ path: String, _ host: URL) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -22,8 +23,9 @@ struct AccountView: View {
     static let toddHost = URL(string: "https://todd.taliferro.tech")!
     static let showAtStartupKey = "outreach.gettingStarted.showAtStartup"
 
-    init(start: AccountPage?, authService: AuthService, awardsService: AwardsService, onOpenWeb: @escaping (_ path: String, _ host: URL) -> Void) {
+    init(start: AccountPage?, authService: AuthService, apiClient: OutreachAPIClient, awardsService: AwardsService, onOpenWeb: @escaping (_ path: String, _ host: URL) -> Void) {
         self.authService = authService
+        self.apiClient = apiClient
         self.awardsService = awardsService
         self.onOpenWeb = onOpenWeb
         _path = State(initialValue: start.map { [$0] } ?? [])
@@ -52,6 +54,9 @@ struct AccountView: View {
                 NavigationLink(value: AccountPage.awards) {
                     Label("Awards", systemImage: "rosette")
                 }
+                NavigationLink(value: AccountPage.notifications) {
+                    Label("Notifications", systemImage: "bell.badge")
+                }
             }
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
@@ -67,6 +72,8 @@ struct AccountView: View {
                 case .awards:
                     AwardsGridView(awardsService: awardsService)
                         .task { await awardsService.sync() }
+                case .notifications:
+                    NotificationSettingsView(apiClient: apiClient)
                 }
             }
         }

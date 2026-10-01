@@ -6,6 +6,7 @@ import TODDAwardsKit
 
 @main
 struct OutreachIOSApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var authService: AuthService
     @StateObject private var entitlementService: EntitlementService
     @StateObject private var awardsService: AwardsService
@@ -24,6 +25,7 @@ struct OutreachIOSApp: App {
         _awardsService = StateObject(wrappedValue: OutreachAwards.makeService(authService: authService))
         let apiClient = OutreachAPIClient(config: config, authService: authService)
         self.apiClient = apiClient
+        PushService.shared.configure(apiClient: apiClient)
         _entitlementService = StateObject(wrappedValue: EntitlementService(
             apiClient: apiClient,
             authService: authService,

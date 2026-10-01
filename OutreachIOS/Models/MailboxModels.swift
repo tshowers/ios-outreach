@@ -109,4 +109,24 @@ struct DataEnvelope<T: Decodable>: Decodable {
 
 struct ServerMessage: Decodable {
     let message: String?
+    let error: String?
+    let cap: Int?
+
+    /// A sentence to show - the backend's message, or a plain version of
+    /// the codes /send-email answers with on their own.
+    var displayText: String? {
+        if let message, !message.isEmpty { return message }
+        switch error {
+        case "daily_cap_exceeded":
+            return "You've reached today's sending limit\(cap.map { " of \($0)" } ?? ""). Catalyst can send again tomorrow."
+        case "email_html_too_large":
+            return "This email is too large to send. Shorten it and try again."
+        case "unauthorized":
+            return "Please sign in again, then try once more."
+        case let code?:
+            return code.replacingOccurrences(of: "_", with: " ").capitalized
+        default:
+            return nil
+        }
+    }
 }

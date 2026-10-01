@@ -72,6 +72,9 @@ struct RootView: View {
     }
 
     private func signOut() {
-        try? authService.signOut()
+        Task {
+            await PushService.shared.unregister()
+            try? authService.signOut()
+        }
     }
 }

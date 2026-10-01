@@ -74,11 +74,30 @@ final class AuthService: ObservableObject {
         let decoded = try JSONDecoder().decode(BootstrapResponse.self, from: data)
         tenantId = decoded.tenantId
         await submitOnboardingIfNeeded()
+        // Fill the profile's name from Sign in with Apple / Google instead of
+        // ever asking for it (App Review guideline 4).
+        await syncSignInName()
     }
 
     /// Where the pre-sign-in wizard keeps the user's name until sign-in.
     static let profileStore = OnboardingProfileStore(storageKey: "outreach.onboardingProfile", source: "outreach-ios")
 
+
+    /// The name Apple or Google already gave us -> the TODD profile (blank
+    /// fields only), so no screen asks for it (TODDProfileKit.SignInNameSync).
+    func syncSignInName() async {
+        guard let user = currentUser else { return }
+        await SignInNameSync.submitIfNeeded(
+            uid: user.uid,
+            displayName: user.displayName,
+            source: "outreach-ios",
+            baseURL: AppConfig.fromBundle().apiBaseURL,
+            idToken: { [weak self] in
+                guard let self else { throw AuthServiceError.notSignedIn }
+                return try await self.freshIdToken()
+            }
+        )
+    }
     /// Saves the wizard's name to the TODD profile (blank fields only).
     /// Best-effort; retries next launch if it fails. The inbox isn't
     /// connected here - ConnectInboxView does that after sign-in.

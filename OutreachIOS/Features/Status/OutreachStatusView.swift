@@ -27,6 +27,8 @@ struct OutreachStatusView: View {
     @State private var isShowingConnectInbox = false
     /// Inbox, messages and connecting are pushed pages (no sheets).
     @State private var path: [OutreachRoute] = []
+    /// Contacts emailed from Catalyst this session - hidden from its queue.
+    @State private var catalystSentIds: Set<String> = []
     @State private var isShowingLogoutConfirmation = false
     @State private var isOpeningWebHandoff = false
     @State private var webHandoffErrorMessage: String?
@@ -41,7 +43,6 @@ struct OutreachStatusView: View {
         (title: "Home", icon: "house", path: "/", host: outreachHost),
         (title: "Growth", icon: "chart.line.uptrend.xyaxis", path: "/app", host: outreachHost),
         (title: "Outbox", icon: "paperplane.circle", path: "/signal-engine", host: outreachHost),
-        (title: "Catalyst", icon: "bolt.badge.clock", path: "/email-processor", host: outreachHost),
         (title: "Email Composer", icon: "square.and.pencil", path: "/compose-email", host: outreachHost),
         (title: "Help", icon: "questionmark.circle", path: "/help", host: outreachHost),
         (title: "Daily Momentum", icon: "flame", path: "/daily-momentum", host: toddHost),
@@ -80,6 +81,16 @@ struct OutreachStatusView: View {
                             Label("Inbox", systemImage: "tray")
                         }
                         Button {
+                            path = [.catalyst]
+                        } label: {
+                            Label("Catalyst", systemImage: "bolt.badge.clock")
+                        }
+                        Button {
+                            path = [.activity]
+                        } label: {
+                            Label("Activity", systemImage: "bell")
+                        }
+                        Button {
                             openAccount(.gettingStarted)
                         } label: {
                             Label("Getting Started", systemImage: "checklist")
@@ -93,6 +104,11 @@ struct OutreachStatusView: View {
                             openAccount(.awards)
                         } label: {
                             Label("Awards", systemImage: "rosette")
+                        }
+                        Button {
+                            openAccount(.notifications)
+                        } label: {
+                            Label("Notifications", systemImage: "bell.badge")
                         }
                         Button {
                             isShowingMessagesSent = true
@@ -124,7 +140,14 @@ struct OutreachStatusView: View {
                 }
             }
             .refreshable { await viewModel.load() }
+            .onReceive(PushService.shared.$pendingRoute) { url in
+                guard let url else { return }
+                PushService.shared.pendingRoute = nil
+                isShowingAccount = false
+                openRoute(url)
+            }
             .task {
+                await PushService.shared.registerIfAllowed()
                 await viewModel.load()
                 await checkAwards()
                 // Came through the wizard: connect that inbox first;
@@ -146,7 +169,7 @@ struct OutreachStatusView: View {
                 // Steps get done from here - the likeliest moment for new awards.
                 Task { await checkAwards() }
             }) {
-                AccountView(start: accountStart, authService: authService, awardsService: awardsService) { path, host in
+                AccountView(start: accountStart, authService: authService, apiClient: apiClient, awardsService: awardsService) { path, host in
                     openWebHandoff(path: path, host: host)
                 }
             }
@@ -166,6 +189,15 @@ struct OutreachStatusView: View {
                     InboxView(apiClient: apiClient, defaultEmail: authService.userEmail ?? "", path: $path)
                 case .message(let mailboxId, let messageId):
                     MessageDetailView(apiClient: apiClient, mailboxId: mailboxId, messageId: messageId)
+                case .catalyst:
+                    CatalystView(apiClient: apiClient, path: $path, sentContactIds: $catalystSentIds)
+                case .activity:
+                    ActivityView(apiClient: apiClient) { url in openRoute(url) }
+                case .catalystCompose(let contact):
+                    CatalystComposeView(apiClient: apiClient, contact: contact) { contactId in
+                        catalystSentIds.insert(contactId)
+                        Task { await checkAwards() }
+                    }
                 case .connect(let email, let provider):
                     ConnectMailboxView(apiClient: apiClient, email: email, provider: provider) {
                         Task { await checkAwards() }
@@ -183,7 +215,10 @@ struct OutreachStatusView: View {
             .alert("Log out of Outreach?", isPresented: $isShowingLogoutConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Log Out", role: .destructive) {
-                    try? authService.signOut()
+                    Task {
+                        await PushService.shared.unregister()
+                        try? authService.signOut()
+                    }
                 }
             } message: {
                 Text("You can sign in again with your TODD account.")
@@ -193,6 +228,20 @@ struct OutreachStatusView: View {
             } message: {
                 Text(webHandoffErrorMessage ?? "")
             }
+        }
+    }
+
+    /// Opens the page a tapped notification (or Activity row) points to.
+    /// Needs You and Drafts get their own pages later in 1.1; until then a
+    /// reply opens the Inbox.
+    private func openRoute(_ url: URL) {
+        guard url.scheme == "outreach" else { return }
+        switch url.host() {
+        case "needs-you", "inbox": path = [.inbox]
+        case "catalyst": path = [.catalyst]
+        case "activity": path = [.activity]
+        case "notifications": openAccount(.notifications)
+        default: path = [.activity]
         }
     }
 
@@ -232,6 +281,8 @@ struct OutreachStatusView: View {
             VStack(alignment: .leading, spacing: 18) {
                 commandDeck(summary)
 
+                NotificationsPromptCard()
+
                 Button {
                     path = [.inbox]
                 } label: {
@@ -242,6 +293,28 @@ struct OutreachStatusView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Inbox").font(.headline)
                             Text("See who replied, read it, and answer from your own email.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }
+                    .padding(18)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    path = [.catalyst]
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "bolt.badge.clock.fill")
+                            .font(.title2)
+                            .foregroundStyle(OutreachTheme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Catalyst").font(.headline)
+                            Text("Reach the people who've gone quiet. TODD drafts it, you send it.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)

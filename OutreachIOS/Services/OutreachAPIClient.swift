@@ -139,10 +139,69 @@ final class OutreachAPIClient {
         return url
     }
 
+    // MARK: - Catalyst (/mobile/outreach/catalyst/*)
+
+    func fetchCatalystQueue() async throws -> [CatalystContact] {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/catalyst/queue")
+        let data = try await authorizedRequest(method: "GET", url: url)
+        return try decoder.decode(DataEnvelope<[CatalystContact]>.self, from: data).data
+    }
+
+    func draftCatalystEmail(contactId: String, tone: CatalystTone) async throws -> CatalystDraft {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/catalyst/draft")
+        let body = try encoder.encode(CatalystDraftRequest(contactId: contactId, tone: tone.rawValue))
+        let data = try await authorizedRequest(method: "POST", url: url, body: body)
+        return try decoder.decode(DataEnvelope<CatalystDraft>.self, from: data).data
+    }
+
+    /// The server builds the email from its own records (recipient from the
+    /// contact, sender from your account) - only the subject and body come
+    /// from here.
+    func sendCatalystEmail(contactId: String, subject: String, html: String) async throws -> CatalystSendResult {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/catalyst/send")
+        let body = try encoder.encode(CatalystSendRequest(contactId: contactId, subject: subject, html: html))
+        let data = try await authorizedRequest(method: "POST", url: url, body: body)
+        return (try? decoder.decode(CatalystSendResult.self, from: data)) ?? CatalystSendResult(scheduled: nil, queued: nil, message: nil)
+    }
+
     private func mailboxURL(_ components: String...) -> URL {
         components.reduce(config.apiBaseURL.appending(path: "mobile/outreach/mailboxes")) { url, component in
             url.appending(path: component)
         }
+    }
+
+    // MARK: - Push notifications and activity (pushRoutes.js)
+
+    func registerPushDevice(token: String, environment: String, appVersion: String) async throws {
+        let url = config.apiBaseURL.appending(path: "mobile/push/devices")
+        let body = try encoder.encode(PushDeviceRequest(token: token, app: "outreach", environment: environment, appVersion: appVersion))
+        _ = try await authorizedRequest(method: "POST", url: url, body: body)
+    }
+
+    func unregisterPushDevice(token: String) async throws {
+        let url = config.apiBaseURL.appending(path: "mobile/push/devices").appending(path: token)
+        _ = try await authorizedRequest(method: "DELETE", url: url)
+    }
+
+    func fetchPushPreferences() async throws -> PushPreferences {
+        var components = URLComponents(url: config.apiBaseURL.appending(path: "mobile/push/preferences"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "app", value: "outreach")]
+        let data = try await authorizedRequest(method: "GET", url: components.url!)
+        return try decoder.decode(PushPreferencesEnvelope.self, from: data).preferences
+    }
+
+    func savePushPreferences(_ preferences: PushPreferences) async throws -> PushPreferences {
+        let url = config.apiBaseURL.appending(path: "mobile/push/preferences")
+        let body = try encoder.encode(PushPreferencesRequest(app: "outreach", preferences: preferences))
+        let data = try await authorizedRequest(method: "PUT", url: url, body: body)
+        return try decoder.decode(PushPreferencesEnvelope.self, from: data).preferences
+    }
+
+    func fetchActivity(limit: Int = 50) async throws -> [ActivityItem] {
+        var components = URLComponents(url: config.apiBaseURL.appending(path: "mobile/activity"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "app", value: "outreach"), URLQueryItem(name: "limit", value: String(limit))]
+        let data = try await authorizedRequest(method: "GET", url: components.url!)
+        return try decoder.decode(ActivityEnvelope.self, from: data).items
     }
 
     // MARK: - Request building
@@ -163,7 +222,7 @@ final class OutreachAPIClient {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            if let message = (try? JSONDecoder().decode(ServerMessage.self, from: data))?.message, !message.isEmpty {
+            if let message = (try? JSONDecoder().decode(ServerMessage.self, from: data))?.displayText, !message.isEmpty {
                 throw OutreachAPIError.server(httpResponse.statusCode, message)
             }
             throw OutreachAPIError.httpError(httpResponse.statusCode)
