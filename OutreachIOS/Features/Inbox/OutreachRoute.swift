@@ -8,4 +8,7 @@ enum OutreachRoute: Hashable {
     case catalyst
     case catalystCompose(CatalystContact)
     case activity
+    case needsYou
+    case needsYouDetail(NeedsYouItem)
+    case needsYouReply(NeedsYouItem, useMayaDraft: Bool)
 }

@@ -16,6 +16,7 @@ import TODDProfileKit
 /// equivalent yet.
 struct OutreachStatusView: View {
     @StateObject private var viewModel: OutreachStatusViewModel
+    @StateObject private var needsYou: NeedsYouStore
     @ObservedObject var authService: AuthService
     @ObservedObject var awardsService: AwardsService
     let apiClient: OutreachAPIClient
@@ -53,6 +54,7 @@ struct OutreachStatusView: View {
         self.authService = authService
         self.awardsService = awardsService
         _viewModel = StateObject(wrappedValue: OutreachStatusViewModel(apiClient: apiClient))
+        _needsYou = StateObject(wrappedValue: NeedsYouStore(apiClient: apiClient))
     }
 
     var body: some View {
@@ -75,6 +77,11 @@ struct OutreachStatusView: View {
                     Menu {
                         // In-app pages first; web pages grouped under their
                         // own header so it's clear which ones leave the app.
+                        Button {
+                            path = [.needsYou]
+                        } label: {
+                            Label("Needs You", systemImage: "person.crop.circle.badge.exclamationmark")
+                        }
                         Button {
                             path = [.inbox]
                         } label: {
@@ -139,7 +146,10 @@ struct OutreachStatusView: View {
                     .accessibilityLabel("Account menu")
                 }
             }
-            .refreshable { await viewModel.load() }
+            .refreshable {
+                await viewModel.load()
+                await needsYou.load()
+            }
             .onReceive(PushService.shared.$pendingRoute) { url in
                 guard let url else { return }
                 PushService.shared.pendingRoute = nil
@@ -148,6 +158,7 @@ struct OutreachStatusView: View {
             }
             .task {
                 await PushService.shared.registerIfAllowed()
+                await needsYou.load()
                 await viewModel.load()
                 await checkAwards()
                 // Came through the wizard: connect that inbox first;
@@ -193,6 +204,12 @@ struct OutreachStatusView: View {
                     CatalystView(apiClient: apiClient, path: $path, sentContactIds: $catalystSentIds)
                 case .activity:
                     ActivityView(apiClient: apiClient) { url in openRoute(url) }
+                case .needsYou:
+                    NeedsYouView(store: needsYou, path: $path)
+                case .needsYouDetail(let item):
+                    NeedsYouDetailView(item: item, store: needsYou, path: $path)
+                case .needsYouReply(let item, let useMayaDraft):
+                    NeedsYouReplyView(item: item, useMayaDraft: useMayaDraft, store: needsYou, path: $path)
                 case .catalystCompose(let contact):
                     CatalystComposeView(apiClient: apiClient, contact: contact) { contactId in
                         catalystSentIds.insert(contactId)
@@ -232,17 +249,66 @@ struct OutreachStatusView: View {
     }
 
     /// Opens the page a tapped notification (or Activity row) points to.
-    /// Needs You and Drafts get their own pages later in 1.1; until then a
-    /// reply opens the Inbox.
     private func openRoute(_ url: URL) {
         guard url.scheme == "outreach" else { return }
         switch url.host() {
-        case "needs-you", "inbox": path = [.inbox]
+        case "needs-you":
+            // outreach://needs-you/<contactId> opens that person.
+            let contactId = url.pathComponents.dropFirst().first ?? ""
+            Task {
+                await needsYou.load()
+                if let item = needsYou.item(for: contactId) {
+                    path = [.needsYou, .needsYouDetail(item)]
+                } else {
+                    path = [.needsYou]
+                }
+            }
+        case "inbox": path = [.inbox]
         case "catalyst": path = [.catalyst]
         case "activity": path = [.activity]
         case "notifications": openAccount(.notifications)
         default: path = [.activity]
         }
+    }
+
+    /// Top of the dashboard: who's waiting on you.
+    private var needsYouCard: some View {
+        Button {
+            path = [.needsYou]
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(needsYou.items.isEmpty ? Color(.tertiarySystemFill) : OutreachTheme.accent)
+                        .frame(width: 44, height: 44)
+                    Text("\(needsYou.items.count)")
+                        .font(.headline)
+                        .foregroundStyle(needsYou.items.isEmpty ? Color.secondary : Color.white)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Needs You").font(.headline)
+                    Text(needsYouSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Needs You, \(needsYou.items.count) waiting")
+    }
+
+    private var needsYouSubtitle: String {
+        guard let first = needsYou.items.first else {
+            return needsYou.hasLoaded ? "You're all caught up." : "Checking who's waiting on you…"
+        }
+        let others = needsYou.items.count - 1
+        return others > 0 ? "\(first.contactName) and \(others) more are waiting on you." : "\(first.contactName) is waiting on you."
     }
 
     private func openAccount(_ page: AccountPage?) {
@@ -279,6 +345,8 @@ struct OutreachStatusView: View {
     private func dashboard(_ summary: SignalEngineSummary) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                needsYouCard
+
                 commandDeck(summary)
 
                 NotificationsPromptCard()

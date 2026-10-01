@@ -170,6 +170,30 @@ final class OutreachAPIClient {
         }
     }
 
+    // MARK: - Needs You (/mobile/outreach/needs-you)
+
+    func fetchNeedsYou() async throws -> [NeedsYouItem] {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/needs-you")
+        let data = try await authorizedRequest(method: "GET", url: url)
+        return try decoder.decode(NeedsYouListEnvelope.self, from: data).data.items
+    }
+
+    func draftNeedsYouReply(contactId: String) async throws -> NeedsYouDraft {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/needs-you").appending(path: contactId).appending(path: "draft")
+        let data = try await authorizedRequest(method: "POST", url: url, body: Data("{}".utf8))
+        return try decoder.decode(NeedsYouDraftEnvelope.self, from: data).data
+    }
+
+    func sendNeedsYouReply(contactId: String, subject: String, body: String) async throws {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/needs-you").appending(path: contactId).appending(path: "send")
+        _ = try await authorizedRequest(method: "POST", url: url, body: try encoder.encode(NeedsYouSendRequest(subject: subject, body: body)))
+    }
+
+    func markNeedsYouDone(contactId: String) async throws {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/needs-you").appending(path: contactId).appending(path: "done")
+        _ = try await authorizedRequest(method: "POST", url: url, body: Data("{}".utf8))
+    }
+
     // MARK: - Push notifications and activity (pushRoutes.js)
 
     func registerPushDevice(token: String, environment: String, appVersion: String) async throws {
