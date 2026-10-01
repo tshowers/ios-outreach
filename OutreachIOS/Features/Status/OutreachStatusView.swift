@@ -17,6 +17,7 @@ import TODDProfileKit
 struct OutreachStatusView: View {
     @StateObject private var viewModel: OutreachStatusViewModel
     @StateObject private var needsYou: NeedsYouStore
+    @StateObject private var drafts: DraftsStore
     @ObservedObject var authService: AuthService
     @ObservedObject var awardsService: AwardsService
     let apiClient: OutreachAPIClient
@@ -55,6 +56,7 @@ struct OutreachStatusView: View {
         self.awardsService = awardsService
         _viewModel = StateObject(wrappedValue: OutreachStatusViewModel(apiClient: apiClient))
         _needsYou = StateObject(wrappedValue: NeedsYouStore(apiClient: apiClient))
+        _drafts = StateObject(wrappedValue: DraftsStore(apiClient: apiClient))
     }
 
     var body: some View {
@@ -81,6 +83,11 @@ struct OutreachStatusView: View {
                             path = [.needsYou]
                         } label: {
                             Label("Needs You", systemImage: "person.crop.circle.badge.exclamationmark")
+                        }
+                        Button {
+                            path = [.drafts]
+                        } label: {
+                            Label("Drafts", systemImage: "square.and.pencil")
                         }
                         Button {
                             path = [.inbox]
@@ -149,6 +156,7 @@ struct OutreachStatusView: View {
             .refreshable {
                 await viewModel.load()
                 await needsYou.load()
+                await drafts.load()
             }
             .onReceive(PushService.shared.$pendingRoute) { url in
                 guard let url else { return }
@@ -159,6 +167,7 @@ struct OutreachStatusView: View {
             .task {
                 await PushService.shared.registerIfAllowed()
                 await needsYou.load()
+                await drafts.load()
                 await viewModel.load()
                 await checkAwards()
                 // Came through the wizard: connect that inbox first;
@@ -210,6 +219,10 @@ struct OutreachStatusView: View {
                     NeedsYouDetailView(item: item, store: needsYou, path: $path)
                 case .needsYouReply(let item, let useMayaDraft):
                     NeedsYouReplyView(item: item, useMayaDraft: useMayaDraft, store: needsYou, path: $path)
+                case .drafts:
+                    DraftsView(store: drafts, path: $path)
+                case .draftDetail(let item):
+                    DraftDetailView(item: item, store: drafts, path: $path)
                 case .catalystCompose(let contact):
                     CatalystComposeView(apiClient: apiClient, contact: contact) { contactId in
                         catalystSentIds.insert(contactId)
@@ -264,6 +277,7 @@ struct OutreachStatusView: View {
                 }
             }
         case "inbox": path = [.inbox]
+        case "drafts": path = [.drafts]
         case "catalyst": path = [.catalyst]
         case "activity": path = [.activity]
         case "notifications": openAccount(.notifications)
@@ -301,6 +315,48 @@ struct OutreachStatusView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Needs You, \(needsYou.items.count) waiting")
+    }
+
+    /// Maya's drafts waiting for approval.
+    private var draftsCard: some View {
+        Button {
+            path = [.drafts]
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "square.and.pencil")
+                    .font(.title2)
+                    .foregroundStyle(OutreachTheme.accent)
+                    .frame(width: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Drafts").font(.headline)
+                    Text(draftsSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                if !drafts.items.isEmpty {
+                    Text("\(drafts.items.count)")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(OutreachTheme.accent.opacity(0.15), in: Capsule())
+                        .foregroundStyle(OutreachTheme.accent)
+                }
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var draftsSubtitle: String {
+        if !drafts.hasLoaded { return "Loading Maya's drafts…" }
+        if drafts.items.isEmpty {
+            return drafts.rewritingCount > 0 ? "Maya is rewriting \(drafts.rewritingCount)." : "Nothing waiting for approval."
+        }
+        return "\(drafts.items.count) waiting for your approval."
     }
 
     private var needsYouSubtitle: String {
@@ -346,6 +402,8 @@ struct OutreachStatusView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 needsYouCard
+
+                draftsCard
 
                 commandDeck(summary)
 

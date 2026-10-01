@@ -194,6 +194,50 @@ final class OutreachAPIClient {
         _ = try await authorizedRequest(method: "POST", url: url, body: Data("{}".utf8))
     }
 
+    // MARK: - Drafts (/mobile/outreach/drafts)
+
+    func fetchDrafts() async throws -> DraftsEnvelope.DataBody {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/drafts")
+        let data = try await authorizedRequest(method: "GET", url: url)
+        return try decoder.decode(DraftsEnvelope.self, from: data).data
+    }
+
+    func approveDraft(contactId: String, subject: String, body: String) async throws {
+        let url = draftURL(contactId, "approve")
+        _ = try await authorizedRequest(method: "POST", url: url, body: try encoder.encode(DraftApproveRequest(subject: subject, body: body)))
+    }
+
+    func rejectDraft(contactId: String, reason: String) async throws {
+        let url = draftURL(contactId, "reject")
+        _ = try await authorizedRequest(method: "POST", url: url, body: try encoder.encode(DraftRejectRequest(reason: reason)))
+    }
+
+    func discardDraft(contactId: String) async throws {
+        _ = try await authorizedRequest(method: "POST", url: draftURL(contactId, "discard"), body: Data("{}".utf8))
+    }
+
+    func sendDraftTest(contactId: String) async throws {
+        _ = try await authorizedRequest(method: "POST", url: draftURL(contactId, "test"), body: Data("{}".utf8))
+    }
+
+    /// - Returns: how many went through.
+    func approveDrafts(contactIds: [String]) async throws -> Int {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/drafts/approve-batch")
+        let data = try await authorizedRequest(method: "POST", url: url, body: try encoder.encode(DraftBatchRequest(contactIds: contactIds)))
+        return (try? decoder.decode(DraftBatchEnvelope.self, from: data))?.data?.approvedCount ?? 0
+    }
+
+    /// - Returns: how many were queued for Maya to rewrite.
+    func rewriteDrafts(contactIds: [String]) async throws -> Int {
+        let url = config.apiBaseURL.appending(path: "mobile/outreach/drafts/rewrite-batch")
+        let data = try await authorizedRequest(method: "POST", url: url, body: try encoder.encode(DraftBatchRequest(contactIds: contactIds)))
+        return (try? decoder.decode(DraftBatchEnvelope.self, from: data))?.data?.queuedCount ?? 0
+    }
+
+    private func draftURL(_ contactId: String, _ action: String) -> URL {
+        config.apiBaseURL.appending(path: "mobile/outreach/drafts").appending(path: contactId).appending(path: action)
+    }
+
     // MARK: - Push notifications and activity (pushRoutes.js)
 
     func registerPushDevice(token: String, environment: String, appVersion: String) async throws {

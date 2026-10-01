@@ -11,4 +11,6 @@ enum OutreachRoute: Hashable {
     case needsYou
     case needsYouDetail(NeedsYouItem)
     case needsYouReply(NeedsYouItem, useMayaDraft: Bool)
+    case drafts
+    case draftDetail(DraftItem)
 }
