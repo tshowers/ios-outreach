@@ -278,6 +278,9 @@ struct OutreachStatusView: View {
             }
         case "inbox": path = [.inbox]
         case "drafts": path = [.drafts]
+        // Maya's day summary lives on the web for now (Maya's app gets a
+        // native one in its 1.1).
+        case "maya-day": openWebHandoff(path: "/maya-day", host: Self.outreachHost)
         case "catalyst": path = [.catalyst]
         case "activity": path = [.activity]
         case "notifications": openAccount(.notifications)
