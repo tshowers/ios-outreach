@@ -6,7 +6,7 @@ import SwiftUI
 /// `-designGallery home` (or another `Screen`), as PaywallScreenshot does.
 enum DesignGallery {
     enum Screen: String {
-        case home, components, catalystStale, catalystSend, catalystPreview, catalystHistory, draftsList, draftReview, inbox, message, activity, needsYou, needsYouDetail
+        case home, components, catalystStale, catalystSend, catalystPreview, catalystHistory, draftsList, draftReview, inbox, message, activity, needsYou, needsYouDetail, needsYouAway, needsYouZero
     }
 
     static var current: Screen? {
@@ -28,8 +28,10 @@ enum DesignGallery {
         case .draftReview: DraftsSample(review: true)
         case .inbox: InboxSample()
         case .activity: NavigationStack { ActivityView(apiClient: sampleAPIClient(), onOpen: { _ in }, sample: ActivitySample.items) }
-        case .needsYou: NeedsYouSample(detail: false)
-        case .needsYouDetail: NeedsYouSample(detail: true)
+        case .needsYou: NeedsYouSample()
+        case .needsYouDetail: NeedsYouSample(detailId: "dl")
+        case .needsYouAway: NeedsYouSample(detailId: "rl")
+        case .needsYouZero: NeedsYouSample(empty: true)
         case .message: NavigationStack { MessageDetailView(apiClient: sampleAPIClient(), mailboxId: "m", messageId: "1", sample: InboxSample.messages[0]) }
         }
     }
@@ -178,26 +180,37 @@ private enum ActivitySample {
 private struct NeedsYouSample: View {
     @StateObject private var store = NeedsYouStore(apiClient: sampleAPIClient())
     @State private var path: [OutreachRoute] = []
-    let detail: Bool
+    var detailId: String?
+    var empty = false
 
-    static let items: [NeedsYouItem] = DesignGallery.decode(#"""
-    [{"contactId":"t","contactName":"Theodore Ricks-Freeman","companyName":"The DC Voice","email":"tg@thedcvoice.com","phone":"2025550100","lastSubject":"We have been brainwashed into searching, why not Find?","replyText":"________________________________\nFrom: Zoom <no-reply@zoom.us>\nSent: Thursday, October 1, 2026 4:22 PM\n\nMeeting assets for Theodore Freeman - The DC Voice's Zoom Meeting are ready!","replyClean":"Meeting assets for Theodore Freeman - The DC Voice's Zoom Meeting are ready!\n\nReview action items\n\nRecording\nDuration: 00:48:52","replyKind":"automated","replySummary":"The email is an automated notification from Zoom about meeting assets being ready, not a direct reply from Theodore Ricks-Freeman.","repliedAt":"2026-10-01T16:22:00Z","reasonKey":"no_safe_draft","reasonLabel":"No safe draft","reasonDetail":"","nextMove":"","mayaDraftSubject":"","mayaDraftBody":""},
-     {"contactId":"g","contactName":"George Dimov","companyName":"Dimov Tax","email":"g@dimov.com","phone":"","lastSubject":"Quick question","replyText":"Happy to talk. Could we schedule a call about tax planning next week?","replyClean":"Happy to talk. Could we schedule a call about tax planning next week?","replyKind":"interested","replySummary":"Offered to schedule a call about tax planning.","repliedAt":"2026-09-24T16:22:00Z","reasonKey":"reply_came_in","reasonLabel":"Reply came in","reasonDetail":"","nextMove":"","mayaDraftSubject":"Re: Quick question","mayaDraftBody":"Great - how's Tuesday at 10?"},
-     {"contactId":"w","contactName":"William Pierce","companyName":"A.T. Chadwick","email":"w@atc.com","phone":"","lastSubject":"Finding","replyText":"I will be out of the office Sept 28, 29, and 30th, with limited availability to email.","replyClean":"I will be out of the office Sept 28, 29, and 30th, with limited availability to email.","replyKind":"out_of_office","replySummary":"","repliedAt":"2026-09-28T16:22:00Z","reasonKey":"no_safe_draft","reasonLabel":"No safe draft","reasonDetail":"","nextMove":"","mayaDraftSubject":"","mayaDraftBody":""}]
-    """#)
+    static func item(_ id: String, _ name: String, _ company: String, _ text: String, kind: String, hoursAgo: Double, summary: String = "", draft: String = "", reason: String = "reply_came_in") -> String {
+        let date = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-hoursAgo * 3600))
+        return #"{"contactId":"\#(id)","contactName":"\#(name)","companyName":"\#(company)","email":"\#(id)@example.com","phone":"2065550100","lastSubject":"Which do you think is better, Finding or Searching?","replyText":"\#(text)","replyClean":"\#(text)","replyKind":"\#(kind)","replySummary":"\#(summary)","repliedAt":"\#(date)","reasonKey":"\#(reason)","reasonLabel":"","reasonDetail":"","nextMove":"","mayaDraftSubject":"\#(draft.isEmpty ? "" : "Re: Thursday")","mayaDraftBody":"\#(draft)"}"#
+    }
+
+    static let items: [NeedsYouItem] = DesignGallery.decode("[" + [
+        item("dl", "Dana Lee", "Lee & Co", "Thursday works for me. Could we do 2pm Pacific? I'd like to bring our ops lead, Sam.", kind: "interested", hoursAgo: 2, summary: "wants to meet Thursday", draft: "Hi Dana, Thursday at 2pm Pacific works. I'll send an invite for you and Sam. Talk then, Ty"),
+        item("gd", "George Dimov", "Dimov Tax", "What would onboarding look like for a five-person firm?", kind: "question", hoursAgo: 26, reason: "no_safe_draft"),
+        item("tr", "Theodore Ricks-Freeman", "The DC Voice", "Timing is tight until after our board meeting on the 20th.", kind: "concern", hoursAgo: 27, draft: "Understood. I'll check back after the 20th."),
+        item("rl", "Robert Leung", "Rosendin", "I am currently out of the office and will return on Monday, October 5, 2026. If any immediate needs, please contact Matt Zika at mzika@rosendin.com.", kind: "out_of_office", hoursAgo: 13, reason: "no_safe_draft"),
+        item("gt", "Glenn Torrez", "Torrez Design", "This address is no longer active.", kind: "automated", hoursAgo: 96, reason: "no_safe_draft")
+    ].joined(separator: ",") + "]")
 
     var body: some View {
         NavigationStack(path: $path) {
-            NeedsYouView(store: store, path: $path)
+            NeedsYouView(store: store, path: $path) {}
                 .navigationDestination(for: OutreachRoute.self) { route in
-                    if case .needsYouDetail(let item) = route {
-                        NeedsYouDetailView(item: item, store: store, path: $path)
+                    switch route {
+                    case .needsYouDetail(let item): NeedsYouDetailView(item: item, store: store, path: $path)
+                    case .needsYouReply(let item, let useMayaDraft): NeedsYouReplyView(item: item, useMayaDraft: useMayaDraft, store: store, path: $path)
+                    default: EmptyView()
                     }
                 }
         }
         .onAppear {
-            store.loadSample(Self.items)
-            if detail { path = [.needsYouDetail(Self.items[0])] }
+            store.loadSample(empty ? [] : Self.items)
+            store.planCount = 309
+            if let detailId, let item = Self.items.first(where: { $0.contactId == detailId }) { path = [.needsYouDetail(item)] }
         }
     }
 }

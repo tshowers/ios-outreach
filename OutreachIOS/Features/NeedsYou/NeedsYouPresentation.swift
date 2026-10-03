@@ -157,3 +157,57 @@ struct NeedsYouAvatar: View {
         InitialsBadge(name: item.contactName, tint: Area.needsYou.tint, size: size)
     }
 }
+
+// MARK: - Design 5a-5e
+
+/// The main button for a person (design 5e rules).
+enum NeedsYouAction {
+    case reviewMaya, helpWrite, markDone, connectInbox
+}
+
+extension NeedsYouItem {
+    /// Needs an answer, or just something to clear.
+    var needsAnswer: Bool {
+        !kind.needsNoAnswer && kind != .notInterested
+    }
+
+    var primaryAction: NeedsYouAction {
+        if !needsAnswer { return .markDone }
+        if reasonKey == "missing_sender" { return .connectInbox }
+        return hasMayaDraft ? .reviewMaya : .helpWrite
+    }
+
+    /// "Why it's here." in one sentence - never the internal reason labels.
+    var whyItsHere: String {
+        "\(why.title). \(why.detail)"
+    }
+
+    /// The kind pill, with the return date for an away message.
+    var kindLabel: String {
+        guard kind == .outOfOffice, let back = outOfOffice.returnDate else { return kind.label }
+        return "\(kind.label) · back \(back.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+
+    /// From an away message: when they're back and who covers meanwhile.
+    var outOfOffice: (returnDate: Date?, alternate: String, alternateEmail: String) {
+        let text = readableReply
+        var date: Date?
+        if let match = text.firstMatch(of: /(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/) {
+            let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+            let month = (months.firstIndex(of: String(match.1.prefix(3)).lowercased()) ?? 0) + 1
+            let now = Date()
+            var components = DateComponents(year: match.3.flatMap { Int($0) } ?? Calendar.current.component(.year, from: now), month: month, day: Int(match.2))
+            date = Calendar.current.date(from: components)
+            if match.3 == nil, let found = date, found < now.addingTimeInterval(-30 * 86400) {
+                components.year = (components.year ?? 0) + 1
+                date = Calendar.current.date(from: components)
+            }
+        }
+        var alternate = "", alternateEmail = ""
+        if let match = text.firstMatch(of: /(?:contact|reach out to|email|call)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+(?:at|on|via)\s+([\w.+-]+@[\w-]+\.[\w.]+))?/) {
+            alternate = String(match.1)
+            alternateEmail = match.2.map(String.init) ?? ""
+        }
+        return (date, alternate, alternateEmail)
+    }
+}

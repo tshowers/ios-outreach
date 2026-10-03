@@ -87,6 +87,8 @@ struct OutreachStatusView: View {
                 await drafts.load()
                 await loadTileExtras()
             }
+            // "Maya is running N conversations on her own" when Needs You is clear.
+            .onChange(of: viewModel.summary?.activeThreads) { _, count in needsYou.planCount = count }
             .onReceive(PushService.shared.$pendingRoute) { url in
                 guard let url else { return }
                 PushService.shared.pendingRoute = nil
@@ -148,11 +150,15 @@ struct OutreachStatusView: View {
                 case .activity:
                     ActivityView(apiClient: apiClient) { url in openRoute(url) }
                 case .needsYou:
-                    NeedsYouView(store: needsYou, path: $path)
+                    NeedsYouView(store: needsYou, path: $path) {
+                        openWebHandoff(path: "/signal-engine?tab=plan", host: Self.outreachHost)
+                    }
                 case .needsYouDetail(let item):
                     NeedsYouDetailView(item: item, store: needsYou, path: $path)
                 case .needsYouReply(let item, let useMayaDraft):
                     NeedsYouReplyView(item: item, useMayaDraft: useMayaDraft, store: needsYou, path: $path)
+                case .needsYouHelpWrite(let item):
+                    NeedsYouReplyView(item: item, useMayaDraft: false, store: needsYou, path: $path, autoDraft: true)
                 case .drafts:
                     DraftsView(store: drafts, path: $path)
                 case .draftDetail(let item):

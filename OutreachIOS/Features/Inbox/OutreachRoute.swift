@@ -10,6 +10,8 @@ enum OutreachRoute: Hashable {
     case needsYou
     case needsYouDetail(NeedsYouItem)
     case needsYouReply(NeedsYouItem, useMayaDraft: Bool)
+    /// The reply page, with Maya drafting as it opens.
+    case needsYouHelpWrite(NeedsYouItem)
     case drafts
     case draftDetail(DraftItem)
 }
