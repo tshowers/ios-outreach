@@ -33,7 +33,7 @@ struct NeedsYouView: View {
                             } label: {
                                 Label("Reply", systemImage: "arrowshape.turn.up.left")
                             }
-                            .tint(OutreachTheme.accent)
+                            .tint(Ink.blue)
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button {
@@ -45,9 +45,11 @@ struct NeedsYouView: View {
                         }
                     }
                 }
-                .listStyle(.insetGrouped)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
+        .background(Ink.bg)
         .navigationTitle("Needs You")
         .navigationBarTitleDisplayMode(.inline)
         .task { await store.load() }
@@ -72,18 +74,18 @@ struct NeedsYouRow: View {
             NeedsYouAvatar(item: item)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(item.contactName).font(.headline).lineLimit(1)
+                    Text(item.contactName).font(.system(size: 16, weight: .bold)).lineLimit(1)
                     Spacer(minLength: 8)
                     if let date = item.repliedDate {
-                        Text(date, format: .relative(presentation: .named))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(date.shortAge)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Ink.muted)
                     }
                 }
                 if !item.companyName.isEmpty {
                     Text(item.companyName)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Ink.muted)
                         .lineLimit(1)
                         .padding(.top, -4)
                 }
@@ -93,7 +95,7 @@ struct NeedsYouRow: View {
                 if !item.listPreview.isEmpty {
                     Text(item.listPreview)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Ink.muted)
                         .lineLimit(2)
                 }
             }

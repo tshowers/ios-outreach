@@ -42,16 +42,16 @@ enum NeedsYouKind: String {
         }
     }
 
-    var color: Color {
+    /// The design's message-type tints: replies green, auto-replies yellow,
+    /// bad news pink.
+    var tint: Tint {
         switch self {
-        case .outOfOffice: return .indigo
-        case .automated: return .gray
-        case .interested: return .green
+        case .outOfOffice, .concern: return .yellow
+        case .automated: return .neutral
+        case .interested, .reply: return .green
         case .question: return .blue
-        case .concern: return .orange
-        case .notInterested, .unsubscribe: return .red
-        case .wrongPerson: return .purple
-        case .reply: return OutreachTheme.accent
+        case .notInterested, .unsubscribe: return .pink
+        case .wrongPerson: return .violet
         }
     }
 
@@ -63,16 +63,10 @@ enum NeedsYouKind: String {
 struct NeedsYouPill: View {
     let label: String
     let symbol: String
-    let color: Color
+    let tint: Tint
 
     var body: some View {
-        Label(label, systemImage: symbol)
-            .font(.caption.weight(.semibold))
-            .labelStyle(.titleAndIcon)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .foregroundStyle(color)
-            .background(color.opacity(0.15), in: Capsule())
+        TagPill(text: label, tint: tint, symbol: symbol)
     }
 }
 
@@ -112,12 +106,12 @@ extension NeedsYouItem {
     var pills: [NeedsYouPill] {
         var pills: [NeedsYouPill] = []
         if isPaused {
-            pills.append(NeedsYouPill(label: "Maya paused", symbol: "pause.circle", color: .orange))
+            pills.append(NeedsYouPill(label: "Maya paused", symbol: "pause.circle", tint: .yellow))
         } else {
-            pills.append(NeedsYouPill(label: kind.label, symbol: kind.symbol, color: kind.color))
+            pills.append(NeedsYouPill(label: kind.label, symbol: kind.symbol, tint: kind.tint))
         }
         if hasMayaDraft {
-            pills.append(NeedsYouPill(label: "Reply drafted", symbol: "sparkles", color: OutreachTheme.accent))
+            pills.append(NeedsYouPill(label: "Reply drafted", symbol: "sparkles", tint: .green))
         }
         return pills
     }
@@ -154,23 +148,12 @@ extension NeedsYouItem {
     }
 }
 
-/// A round initials badge, like Contacts.
+/// A round initials badge in Needs You's pink.
 struct NeedsYouAvatar: View {
     let item: NeedsYouItem
     var size: CGFloat = 40
 
     var body: some View {
-        Text(item.initials)
-            .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(Circle().fill(color.gradient))
-            .accessibilityHidden(true)
-    }
-
-    private var color: Color {
-        let palette: [Color] = [.blue, .indigo, .purple, .pink, .orange, .teal, .green, .brown]
-        let index = item.contactName.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0x7fffffff }
-        return palette[index % palette.count]
+        InitialsBadge(name: item.contactName, tint: Area.needsYou.tint, size: size)
     }
 }

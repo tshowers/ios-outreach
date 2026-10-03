@@ -20,19 +20,9 @@ struct NeedsYouDetailView: View {
                 header
                 whyCard
                 if !item.replySummary.isEmpty, item.replySummary != item.readableReply {
-                    card {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Maya's read").font(.subheadline.weight(.semibold))
-                                Text(item.replySummary).font(.subheadline).foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "sparkles").foregroundStyle(OutreachTheme.accent)
-                        }
-                    }
+                    TODDNote(label: "Maya's read", text: item.replySummary)
                 }
                 if !item.readableReply.isEmpty { messageCard }
-                actions
                 if let errorMessage {
                     Text(errorMessage).font(.footnote).foregroundStyle(.red)
                 }
@@ -41,7 +31,8 @@ struct NeedsYouDetailView: View {
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(Ink.bg)
+        .safeAreaInset(edge: .bottom) { StickyActionBar { actions } }
         .navigationTitle(item.firstName)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -54,7 +45,7 @@ struct NeedsYouDetailView: View {
             VStack(spacing: 2) {
                 Text(item.contactName).font(.title2.weight(.bold)).multilineTextAlignment(.center)
                 if !item.companyName.isEmpty {
-                    Text(item.companyName).font(.subheadline).foregroundStyle(.secondary)
+                    Text(item.companyName).font(.subheadline).foregroundStyle(Ink.muted)
                 }
             }
             HStack(spacing: 6) {
@@ -80,9 +71,9 @@ struct NeedsYouDetailView: View {
                 Text(title).font(.caption2.weight(.medium))
             }
             .frame(width: 72, height: 56)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(Ink.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .tint(OutreachTheme.accent)
+        .tint(Area.needsYou.tint.foreground)
         .disabled(url == nil)
         .accessibilityLabel("\(title) \(item.firstName)")
     }
@@ -96,12 +87,15 @@ struct NeedsYouDetailView: View {
 
     private var whyCard: some View {
         let why = item.why
-        return card {
+        let tint = Area.needsYou.tint
+        return TintCard(tint: tint, radius: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(why.title).font(.headline)
-                Text(why.detail).font(.subheadline)
-                Text(why.suggestion).font(.subheadline).foregroundStyle(.secondary)
+                Eyebrow(text: "Why it needs you", color: tint.foreground)
+                Text(why.title).font(.system(size: 20, weight: .bold)).tracking(-0.3)
+                Text(why.detail).font(.system(size: 15))
+                Text(why.suggestion).font(.system(size: 14, weight: .semibold))
             }
+            .foregroundStyle(tint.foreground)
         }
     }
 
@@ -117,11 +111,11 @@ struct NeedsYouDetailView: View {
                     if let date = item.repliedDate {
                         Text(date, format: .relative(presentation: .named))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Ink.muted)
                     }
                 }
                 if !item.lastSubject.isEmpty {
-                    Text(item.replySubject).font(.caption).foregroundStyle(.secondary)
+                    Text(item.replySubject).font(.caption).foregroundStyle(Ink.muted)
                 }
                 Text(item.readableReply)
                     .font(.body)
@@ -140,13 +134,13 @@ struct NeedsYouDetailView: View {
                     DisclosureGroup("Original email", isExpanded: $isShowingOriginal) {
                         Text(item.replyText)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Ink.muted)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 6)
                     }
                     .font(.subheadline)
-                    .tint(.secondary)
+                    .tint(Ink.muted)
                 }
             }
         }
@@ -155,22 +149,23 @@ struct NeedsYouDetailView: View {
     // MARK: - Actions
 
     private var actions: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             if item.kind.needsNoAnswer {
                 doneButton(prominent: true)
-                replyButton(title: "Reply Anyway", useMayaDraft: false, prominent: false)
+                replyButton(title: "Reply anyway", useMayaDraft: false, prominent: false)
             } else {
                 if item.hasMayaDraft {
-                    replyButton(title: "Review Maya's Reply", useMayaDraft: true, prominent: true)
-                    replyButton(title: "Write My Own", useMayaDraft: false, prominent: false)
+                    replyButton(title: "Review Maya's reply", useMayaDraft: true, prominent: true)
+                    HStack(spacing: 8) {
+                        replyButton(title: "Write my own", useMayaDraft: false, prominent: false)
+                        doneButton(prominent: false)
+                    }
                 } else {
-                    replyButton(title: "Write a Reply", useMayaDraft: false, prominent: true)
+                    replyButton(title: "Write a reply", useMayaDraft: false, prominent: true)
+                    doneButton(prominent: false)
                 }
-                doneButton(prominent: false)
             }
         }
-        .controlSize(.large)
-        .padding(.top, 4)
     }
 
     private func replyButton(title: String, useMayaDraft: Bool, prominent: Bool) -> some View {
@@ -180,19 +175,17 @@ struct NeedsYouDetailView: View {
             Label(title, systemImage: useMayaDraft ? "sparkles" : "square.and.pencil")
                 .frame(maxWidth: .infinity)
         }
-        .prominence(prominent)
-        .tint(OutreachTheme.accent)
+        .buttonStyle(.pill(prominent ? .primary : .secondary, height: prominent ? 52 : 44))
     }
 
     private func doneButton(prominent: Bool) -> some View {
         Button {
             Task { await markDone() }
         } label: {
-            Label(isMarkingDone ? "Marking Done…" : "Mark as Done", systemImage: "checkmark.circle")
+            Label(isMarkingDone ? "Marking done…" : "Mark as done", systemImage: "checkmark.circle")
                 .frame(maxWidth: .infinity)
         }
-        .prominence(prominent)
-        .tint(prominent ? OutreachTheme.accent : .secondary)
+        .buttonStyle(.pill(prominent ? .primary : .secondary, height: prominent ? 52 : 44))
         .disabled(isMarkingDone)
     }
 
@@ -200,7 +193,7 @@ struct NeedsYouDetailView: View {
         content()
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(Ink.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func markDone() async {
@@ -212,17 +205,5 @@ struct NeedsYouDetailView: View {
             errorMessage = error.localizedDescription
         }
         isMarkingDone = false
-    }
-}
-
-private extension View {
-    /// The filled style for the screen's main action, bordered otherwise.
-    @ViewBuilder
-    func prominence(_ isProminent: Bool) -> some View {
-        if isProminent {
-            buttonStyle(.borderedProminent)
-        } else {
-            buttonStyle(.bordered)
-        }
     }
 }

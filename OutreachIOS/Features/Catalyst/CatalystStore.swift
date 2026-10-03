@@ -53,6 +53,10 @@ final class CatalystStore: ObservableObject {
     private var runId: String?
     /// Bumped by Start and Stop so a draft that comes back late is ignored.
     private var generation = 0
+    #if DEBUG
+    /// DesignGallery's sample store never reaches the network.
+    private var isSample = false
+    #endif
 
     init(apiClient: OutreachAPIClient) {
         self.apiClient = apiClient
@@ -95,6 +99,9 @@ final class CatalystStore: ObservableObject {
     var canReload: Bool { !isRunning && initialSnapshot.contains { !sentIds.contains($0.id) } }
 
     func load() async {
+        #if DEBUG
+        if isSample { return }
+        #endif
         isLoading = true
         async let queueResult = apiClient.fetchCatalystQueue(limit: Self.maxBatch)
         async let statusResult = apiClient.fetchCatalystSendingStatus()
@@ -112,6 +119,9 @@ final class CatalystStore: ObservableObject {
     }
 
     func refreshHistory() async {
+        #if DEBUG
+        if isSample { return }
+        #endif
         do {
             runs = try await apiClient.fetchCatalystRuns()
         } catch {
@@ -279,3 +289,24 @@ final class CatalystStore: ObservableObject {
         await refreshHistory()
     }
 }
+
+#if DEBUG
+extension CatalystStore {
+    /// Sample data for DesignGallery - no network.
+    func loadSample(queue: [CatalystContact], status: CatalystSendingStatus, runs: [CatalystRun], previewing: Bool = false) {
+        isSample = true
+        self.queue = queue
+        self.status = status
+        self.runs = runs
+        hasLoaded = true
+        guard previewing, let first = queue.first else { return }
+        totalCount = 25
+        sentCount = 3
+        pending = Array(queue.dropFirst().prefix(21))
+        subject = "How construction teams stay on schedule"
+        message = "Hi \(first.firstName),\n\nWhen crews feel out of the loop, small delays add up fast. I've seen a few teams fix that with a five-minute daily check-in.\n\nWould a short call next week be useful?\n\nTy"
+        phase = .preview(first)
+    }
+}
+#endif
+

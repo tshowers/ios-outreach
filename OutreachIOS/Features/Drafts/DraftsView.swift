@@ -10,6 +10,17 @@ struct DraftsView: View {
     @State private var isWorking = false
     @State private var resultMessage: String?
     @State private var errorMessage: String?
+    @State private var filter: DraftFilter = .all
+
+    private enum DraftFilter: Hashable { case all, replies, followUps }
+
+    private var visibleItems: [DraftItem] {
+        switch filter {
+        case .all: return store.items
+        case .replies: return store.items.filter(\.isReply)
+        case .followUps: return store.items.filter { !$0.isReply }
+        }
+    }
 
     var body: some View {
         Group {
@@ -49,39 +60,54 @@ struct DraftsView: View {
     }
 
     private var list: some View {
-        List {
-            if store.rewritingCount > 0 {
-                Label("Maya is rewriting \(store.rewritingCount) draft\(store.rewritingCount == 1 ? "" : "s") you sent back.", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            if let resultMessage {
-                Label(resultMessage, systemImage: "checkmark.circle.fill").font(.footnote).foregroundStyle(.green)
-            }
-            if let errorMessage {
-                Text(errorMessage).font(.footnote).foregroundStyle(.red)
-            }
-            ForEach(store.items) { item in
-                Button {
-                    if isSelecting {
-                        if selection.contains(item.id) { selection.remove(item.id) } else { selection.insert(item.id) }
-                    } else {
-                        path.append(.draftDetail(item))
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        if isSelecting {
-                            Image(systemName: selection.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(selection.contains(item.id) ? OutreachTheme.accent : .secondary)
-                        }
-                        DraftRow(item: item)
-                    }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    FilterChips(selection: $filter, options: [(.all, "All"), (.replies, "Replies"), (.followUps, "Follow-ups")])
+                    Text("\(store.items.count) waiting").font(.system(size: 13)).foregroundStyle(Ink.muted).fixedSize()
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 6)
+                if store.rewritingCount > 0 {
+                    Label("Maya is rewriting \(store.rewritingCount) draft\(store.rewritingCount == 1 ? "" : "s") you sent back.", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Ink.muted)
+                        .padding(.horizontal, 4)
+                }
+                if let resultMessage {
+                    Label(resultMessage, systemImage: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(Tint.green.foreground)
+                }
+                if let errorMessage {
+                    Text(errorMessage).font(.system(size: 13)).foregroundStyle(Ink.danger)
+                }
+                ForEach(visibleItems) { item in
+                    let isSelected = selection.contains(item.id)
+                    Button {
+                        if isSelecting {
+                            if isSelected { selection.remove(item.id) } else { selection.insert(item.id) }
+                        } else {
+                            path.append(.draftDetail(item))
+                        }
+                    } label: {
+                        HStack(alignment: .top, spacing: 12) {
+                            if isSelecting {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 22))
+                                    .foregroundStyle(isSelected ? Area.drafts.tint.foreground : Ink.muted)
+                            }
+                            DraftRow(item: item)
+                        }
+                        .padding(12)
+                        .background(isSelected ? Area.drafts.tint.background : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
-        .listStyle(.plain)
+        .background(Ink.bg)
     }
 
     private var batchBar: some View {
@@ -149,26 +175,45 @@ struct DraftRow: View {
     let item: DraftItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(item.contactName).font(.headline)
-                if item.isReply {
-                    Text("Reply")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(OutreachTheme.accent.opacity(0.15), in: Capsule())
-                        .foregroundStyle(OutreachTheme.accent)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(item.contactName).font(.system(size: 16, weight: .bold)).lineLimit(1)
+                if item.isReply { TagPill(text: "Reply", tint: Area.drafts.tint) }
+                Spacer()
+                if let date = item.updatedDate {
+                    Text(date.shortAge).font(.system(size: 12)).foregroundStyle(Ink.muted)
                 }
             }
             if !item.companyName.isEmpty {
-                Text(item.companyName).font(.subheadline).foregroundStyle(.secondary)
+                Text(item.companyName).font(.system(size: 13)).foregroundStyle(Ink.muted).lineLimit(1)
             }
-            Text(item.subject).font(.subheadline.weight(.medium)).lineLimit(1)
-            Text(item.body).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            Text(item.subject).font(.system(size: 14, weight: .semibold)).foregroundStyle(Ink.text).lineLimit(1).padding(.top, 2)
+            Text(item.preview).font(.system(size: 13)).foregroundStyle(Ink.muted).lineLimit(2)
         }
-        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+}
+
+extension DraftItem {
+    var updatedDate: Date? { ISO8601DateFormatter.flexible(updatedAt) }
+
+    /// The body as text - drafts are HTML.
+    var preview: String {
+        CatalystText.plainText(fromHTML: body).replacingOccurrences(of: "\n", with: " ")
+    }
+}
+
+extension Date {
+    /// "8h", "3d", "now" - the age shown on list rows.
+    var shortAge: String {
+        let seconds = max(0, Date().timeIntervalSince(self))
+        switch seconds {
+        case ..<60: return "now"
+        case ..<3600: return "\(Int(seconds / 60))m"
+        case ..<86400: return "\(Int(seconds / 3600))h"
+        case ..<(86400 * 7): return "\(Int(seconds / 86400))d"
+        default: return formatted(.dateTime.month(.abbreviated).day())
+        }
     }
 }

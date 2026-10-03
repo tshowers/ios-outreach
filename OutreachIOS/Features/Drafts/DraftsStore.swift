@@ -15,12 +15,19 @@ final class DraftsStore: ObservableObject {
     /// The backend takes at most 100 per batch; smaller chunks keep each
     /// request well inside its timeout, as the web Signal Engine does.
     private let chunkSize = 25
+    #if DEBUG
+    /// DesignGallery's sample store never reaches the network.
+    private var isSample = false
+    #endif
 
     init(apiClient: OutreachAPIClient) {
         self.apiClient = apiClient
     }
 
     func load() async {
+        #if DEBUG
+        if isSample { return }
+        #endif
         isLoading = true
         do {
             let result = try await apiClient.fetchDrafts()
@@ -84,3 +91,13 @@ private extension Array {
         stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }
+
+#if DEBUG
+extension DraftsStore {
+    func loadSample(_ items: [DraftItem]) {
+        isSample = true
+        self.items = items
+        hasLoaded = true
+    }
+}
+#endif

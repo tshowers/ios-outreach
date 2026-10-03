@@ -292,7 +292,8 @@ struct OnboardingWizardView: View {
 /// Outreach's green (the web landing page's closing section, #173a2b, reads
 /// too dark as a button - this is its lighter brand green).
 enum OutreachTheme {
-    static let accent = Color(red: 31 / 255, green: 122 / 255, blue: 84 / 255)
+    /// The main action colour - Find's blue (see Design/OutreachDesign.swift).
+    static let accent = Ink.blue
 }
 
 private enum WizardStep: Equatable {

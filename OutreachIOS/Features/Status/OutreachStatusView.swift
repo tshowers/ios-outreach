@@ -34,6 +34,8 @@ struct OutreachStatusView: View {
     /// Inbox, messages and connecting are pushed pages (no sheets).
     @State private var path: [OutreachRoute] = []
     @State private var isShowingLogoutConfirmation = false
+    /// The newest Activity item, for the Activity tile.
+    @State private var latestActivity: ActivityItem?
     @State private var isOpeningWebHandoff = false
     @State private var webHandoffErrorMessage: String?
 
@@ -78,89 +80,12 @@ struct OutreachStatusView: View {
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        // In-app pages first; web pages grouped under their
-                        // own header so it's clear which ones leave the app.
-                        Button {
-                            path = [.needsYou]
-                        } label: {
-                            Label("Needs You", systemImage: "person.crop.circle.badge.exclamationmark")
-                        }
-                        Button {
-                            path = [.drafts]
-                        } label: {
-                            Label("Drafts", systemImage: "square.and.pencil")
-                        }
-                        Button {
-                            path = [.inbox]
-                        } label: {
-                            Label("Inbox", systemImage: "tray")
-                        }
-                        Button {
-                            path = [.catalyst]
-                        } label: {
-                            Label("Catalyst", systemImage: "bolt.badge.clock")
-                        }
-                        Button {
-                            path = [.activity]
-                        } label: {
-                            Label("Activity", systemImage: "bell")
-                        }
-                        Button {
-                            openAccount(.gettingStarted)
-                        } label: {
-                            Label("Getting Started", systemImage: "checklist")
-                        }
-                        Button {
-                            openAccount(.profile)
-                        } label: {
-                            Label("Profile", systemImage: "person.crop.circle")
-                        }
-                        Button {
-                            openAccount(.awards)
-                        } label: {
-                            Label("Awards", systemImage: "rosette")
-                        }
-                        Button {
-                            openAccount(.notifications)
-                        } label: {
-                            Label("Notifications", systemImage: "bell.badge")
-                        }
-                        Button {
-                            isShowingMessagesSent = true
-                        } label: {
-                            Label("Messages Sent", systemImage: "paperplane")
-                        }
-                        Section("Opens outreach.taliferro.tech") {
-                            ForEach(Self.webHandoffMenuItems, id: \.title) { item in
-                                Button {
-                                    openWebHandoff(path: item.path, host: item.host)
-                                } label: {
-                                    Label(item.title, systemImage: item.icon)
-                                }
-                                .disabled(isOpeningWebHandoff)
-                            }
-                        }
-                        Section {
-                            Button(role: .destructive) {
-                                isShowingLogoutConfirmation = true
-                            } label: {
-                                Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
-                            }
-                        }
-                    } label: {
-                        Label("Account", systemImage: "person.crop.circle")
-                            .labelStyle(.iconOnly)
-                    }
-                    .accessibilityLabel("Account menu")
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .refreshable {
                 await viewModel.load()
                 await needsYou.load()
                 await drafts.load()
+                await loadTileExtras()
             }
             .onReceive(PushService.shared.$pendingRoute) { url in
                 guard let url else { return }
@@ -171,6 +96,7 @@ struct OutreachStatusView: View {
             // Alongside the dashboard's own loading, not after it: reading
             // the mailbox takes a few seconds.
             .task { await inbox.prefetch() }
+            .task { await loadTileExtras() }
             .task {
                 await PushService.shared.registerIfAllowed()
                 await needsYou.load()
@@ -292,86 +218,11 @@ struct OutreachStatusView: View {
         }
     }
 
-    /// Top of the dashboard: who's waiting on you.
-    private var needsYouCard: some View {
-        Button {
-            path = [.needsYou]
-        } label: {
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(needsYou.items.isEmpty ? Color(.tertiarySystemFill) : OutreachTheme.accent)
-                        .frame(width: 44, height: 44)
-                    Text("\(needsYou.items.count)")
-                        .font(.headline)
-                        .foregroundStyle(needsYou.items.isEmpty ? Color.secondary : Color.white)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Needs You").font(.headline)
-                    Text(needsYouSubtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-            }
-            .padding()
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Needs You, \(needsYou.items.count) waiting")
-    }
-
-    /// Maya's drafts waiting for approval.
-    private var draftsCard: some View {
-        Button {
-            path = [.drafts]
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "square.and.pencil")
-                    .font(.title2)
-                    .foregroundStyle(OutreachTheme.accent)
-                    .frame(width: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Drafts").font(.headline)
-                    Text(draftsSubtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer()
-                if !drafts.items.isEmpty {
-                    Text("\(drafts.items.count)")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(OutreachTheme.accent.opacity(0.15), in: Capsule())
-                        .foregroundStyle(OutreachTheme.accent)
-                }
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-            }
-            .padding()
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var draftsSubtitle: String {
-        if !drafts.hasLoaded { return "Loading Maya's drafts…" }
-        if drafts.items.isEmpty {
-            return drafts.rewritingCount > 0 ? "Maya is rewriting \(drafts.rewritingCount)." : "Nothing waiting for approval."
-        }
-        return "\(drafts.items.count) waiting for your approval."
-    }
-
-    private var needsYouSubtitle: String {
-        guard let first = needsYou.items.first else {
-            return needsYou.hasLoaded ? "You're all caught up." : "Checking who's waiting on you…"
-        }
-        let others = needsYou.items.count - 1
-        return others > 0 ? "\(first.contactName) and \(others) more are waiting on you." : "\(first.contactName) is waiting on you."
+    /// Catalyst's waiting count and the newest Activity item for the tiles.
+    private func loadTileExtras() async {
+        async let activity = try? apiClient.fetchActivity(limit: 1)
+        if !catalyst.isRunning { await catalyst.load() }
+        latestActivity = await activity?.first
     }
 
     private func openAccount(_ page: AccountPage?) {
@@ -405,147 +256,124 @@ struct OutreachStatusView: View {
         }
     }
 
+    // MARK: - Home (design 4a)
+
     private func dashboard(_ summary: SignalEngineSummary) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                needsYouCard
+        HomeDashboard(
+            model: HomeModel(
+                userName: authService.currentUser?.displayName ?? authService.userEmail ?? "You",
+                brokenMailbox: brokenMailbox?.emailAddress,
+                needsYouNames: needsYou.hasLoaded ? needsYou.items.map(\.contactName) : nil,
+                draftsCount: drafts.hasLoaded ? drafts.items.count : nil,
+                draftsDetail: drafts.items.isEmpty && drafts.rewritingCount > 0 ? "Maya is rewriting \(drafts.rewritingCount)" : "waiting for approval",
+                inboxNewCount: inbox.messagesByMailbox.isEmpty ? nil : newInboxCount,
+                catalystCount: catalyst.hasLoaded ? catalyst.queue.count : nil,
+                activityDetail: latestActivity?.title ?? "What Maya and TODD did",
+                summary: summary
+            ),
+            actions: HomeActions(
+                reconnect: {
+                    guard let mailbox = brokenMailbox else { return }
+                    path = [.inbox, .connect(email: mailbox.emailAddress, provider: MailProvider.detect(from: mailbox.emailAddress))]
+                },
+                needsYou: { path = [.needsYou] },
+                startNeedsYou: {
+                    if let first = needsYou.items.first { path = [.needsYou, .needsYouDetail(first)] }
+                },
+                // Straight into review, one at a time; "See list" goes back.
+                drafts: { path = drafts.items.first.map { [.drafts, .draftDetail($0)] } ?? [.drafts] },
+                inbox: { path = [.inbox] },
+                catalyst: { path = [.catalyst] },
+                activity: { path = [.activity] }
+            )
+        ) {
+            accountMenuItems
+        } footer: {
+            NotificationsPromptCard()
+        }
+    }
 
-                draftsCard
-
-                commandDeck(summary)
-
-                NotificationsPromptCard()
-
+    @ViewBuilder
+    private var accountMenuItems: some View {
+        // In-app pages first; web pages grouped under their
+        // own header so it's clear which ones leave the app.
+        Button {
+            path = [.needsYou]
+        } label: {
+            Label("Needs You", systemImage: "person.crop.circle.badge.exclamationmark")
+        }
+        Button {
+            path = [.drafts]
+        } label: {
+            Label("Drafts", systemImage: "square.and.pencil")
+        }
+        Button {
+            path = [.inbox]
+        } label: {
+            Label("Inbox", systemImage: "tray")
+        }
+        Button {
+            path = [.catalyst]
+        } label: {
+            Label("Catalyst", systemImage: "bolt.badge.clock")
+        }
+        Button {
+            path = [.activity]
+        } label: {
+            Label("Activity", systemImage: "bell")
+        }
+        Button {
+            openAccount(.gettingStarted)
+        } label: {
+            Label("Getting Started", systemImage: "checklist")
+        }
+        Button {
+            openAccount(.profile)
+        } label: {
+            Label("Profile", systemImage: "person.crop.circle")
+        }
+        Button {
+            openAccount(.awards)
+        } label: {
+            Label("Awards", systemImage: "rosette")
+        }
+        Button {
+            openAccount(.notifications)
+        } label: {
+            Label("Notifications", systemImage: "bell.badge")
+        }
+        Button {
+            isShowingMessagesSent = true
+        } label: {
+            Label("Messages Sent", systemImage: "paperplane")
+        }
+        Section("Opens outreach.taliferro.tech") {
+            ForEach(Self.webHandoffMenuItems, id: \.title) { item in
                 Button {
-                    path = [.inbox]
+                    openWebHandoff(path: item.path, host: item.host)
                 } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "tray.full.fill")
-                            .font(.title2)
-                            .foregroundStyle(OutreachTheme.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Inbox").font(.headline)
-                            Text("See who replied, read it, and answer from your own email.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                    }
-                    .padding(18)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    Label(item.title, systemImage: item.icon)
                 }
-                .buttonStyle(.plain)
-
-                Button {
-                    path = [.catalyst]
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "bolt.badge.clock.fill")
-                            .font(.title2)
-                            .foregroundStyle(OutreachTheme.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Catalyst").font(.headline)
-                            Text("Reach the people who've gone quiet. TODD drafts it, you send it.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                    }
-                    .padding(18)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                }
-                .buttonStyle(.plain)
-
-                panel("Pipeline") {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                        healthTile("bolt.fill", "Active Threads", summary.activeThreads, .blue)
-                        healthTile("flame.fill", "Hot Leads", summary.hotLeads, .red)
-                        healthTile("sun.max.fill", "Warm Leads", summary.warmLeads, .orange)
-                        healthTile("doc.text.fill", "Draft Ready", summary.draftReady, .purple)
-                        healthTile("paperplane.fill", "Queued to Send", summary.queuedActions, .green)
-                        healthTile("hourglass", "Stalled / Waiting", summary.stalledWaiting, .gray)
-                    }
-                }
-
-                panel("Needs a decision") {
-                    diagnosisRow(
-                        summary.needsHuman > 0 ? "Threads need your decision" : "Nothing needs you right now",
-                        value: summary.needsHuman,
-                        detail: summary.needsHuman > 0 ? "have reply or handoff signals waiting" : "TODD is watching and will surface anything that needs you",
-                        tone: summary.needsHuman > 0 ? .orange : .green
-                    )
-                }
+                .disabled(isOpeningWebHandoff)
             }
-            .padding(20)
+        }
+        Section {
+            Button(role: .destructive) {
+                isShowingLogoutConfirmation = true
+            } label: {
+                Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+            }
         }
     }
 
-    private func commandDeck(_ summary: SignalEngineSummary) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("TODD COMMAND DECK")
-                    .font(.caption.weight(.bold))
-                    .tracking(2)
-                    .foregroundStyle(.blue)
-                Text("Outreach")
-                    .font(.largeTitle.weight(.bold))
-                Text("Watch opens, clicks, and replies, and see where TODD should push next.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 20)
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("SENDING NOW")
-                    .font(.caption.weight(.bold))
-                    .tracking(1.5)
-                    .foregroundStyle(.secondary)
-                Text("\(summary.sending)")
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
-            }
-        }
-        .padding(22)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    /// An inbox the last sync couldn't reach.
+    private var brokenMailbox: MailboxSummary? {
+        inbox.mailboxes.first { $0.lastSyncStatus == "failed" }
     }
 
-    private func panel<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title.uppercased())
-                .font(.caption.weight(.bold))
-                .tracking(1.5)
-                .foregroundStyle(.secondary)
-            content()
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-
-    private func healthTile(_ icon: String, _ title: String, _ value: Int, _ accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Image(systemName: icon).font(.title3).foregroundStyle(accent)
-            Text("\(value)").font(.system(size: 28, weight: .bold, design: .rounded))
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-        }
-        .padding(15)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private func diagnosisRow(_ title: String, value: Int, detail: String, tone: Color) -> some View {
-        HStack(spacing: 14) {
-            Circle().fill(tone).frame(width: 14, height: 14).shadow(color: tone.opacity(0.55), radius: 6)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.headline)
-                Text("\(value) \(detail)").font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    /// Messages that arrived today in the inbox Outreach shows.
+    private var newInboxCount: Int {
+        let startOfDay = Calendar.current.startOfDay(for: Date())
+        return inbox.messages.filter { ($0.receivedDate ?? .distantPast) >= startOfDay }.count
     }
 }

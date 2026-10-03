@@ -60,12 +60,12 @@ struct ActivityItem: Decodable, Identifiable, Hashable {
 
     var systemImage: String {
         switch category {
-        case "replies": return "arrowshape.turn.up.left.fill"
-        case "mailbox": return "exclamationmark.triangle.fill"
-        case "catalyst": return "paperplane.fill"
-        case "sending_approved": return "checkmark.seal.fill"
-        case "maya": return "sparkles"
-        default: return "bell.fill"
+        case "replies": return "arrowshape.turn.up.left"
+        case "mailbox": return "exclamationmark.triangle"
+        case "catalyst": return "bolt"
+        case "sending_approved": return "checkmark.seal"
+        case "maya": return "sparkle"
+        default: return "bell"
         }
     }
 }

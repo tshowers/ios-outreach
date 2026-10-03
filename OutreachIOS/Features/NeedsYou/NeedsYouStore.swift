@@ -12,12 +12,19 @@ final class NeedsYouStore: ObservableObject {
     @Published var errorMessage: String?
 
     private let apiClient: OutreachAPIClient
+    #if DEBUG
+    /// DesignGallery's sample store never reaches the network.
+    private var isSample = false
+    #endif
 
     init(apiClient: OutreachAPIClient) {
         self.apiClient = apiClient
     }
 
     func load() async {
+        #if DEBUG
+        if isSample { return }
+        #endif
         isLoading = true
         do {
             items = try await apiClient.fetchNeedsYou()
@@ -57,3 +64,13 @@ final class NeedsYouStore: ObservableObject {
         UNUserNotificationCenter.current().setBadgeCount(items.count)
     }
 }
+
+#if DEBUG
+extension NeedsYouStore {
+    func loadSample(_ items: [NeedsYouItem]) {
+        isSample = true
+        self.items = items
+        hasLoaded = true
+    }
+}
+#endif

@@ -35,6 +35,21 @@ struct OutreachIOSApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if let screen = DesignGallery.current {
+                DesignGallery.view(for: screen)
+            } else {
+                app
+            }
+            #else
+            app
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private var app: some View {
+        Group {
             if PaywallScreenshot.current != nil {
                 PaywallView(entitlementService: entitlementService, onSignOut: {})
             } else {

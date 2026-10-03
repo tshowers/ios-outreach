@@ -10,6 +10,18 @@ struct InboxView: View {
     @Binding var path: [OutreachRoute]
 
     @State private var isConfirmingDisconnect = false
+    @State private var filter: InboxFilter = .all
+
+    private enum InboxFilter: Hashable { case all, replies, autoReplies, bounces }
+
+    private var visibleMessages: [MailboxMessage] {
+        switch filter {
+        case .all: return messages
+        case .replies: return messages.filter { [.reply, .forward].contains($0.kind) }
+        case .autoReplies: return messages.filter { $0.kind == .outOfOffice }
+        case .bounces: return messages.filter { $0.kind == .bounce }
+        }
+    }
 
     private var mailboxes: [MailboxSummary] { store.mailboxes }
     private var selectedMailbox: MailboxSummary? { store.selectedMailbox }
@@ -27,9 +39,19 @@ struct InboxView: View {
                 messageList
             }
         }
+        .background(Ink.bg)
         .navigationTitle("Inbox")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // The mailbox and when it last synced, under the title (4e).
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text("Inbox").font(.system(size: 15, weight: .bold))
+                    if let mailbox = selectedMailbox {
+                        Text(syncLine(mailbox)).font(.system(size: 12)).foregroundStyle(Ink.muted).lineLimit(1)
+                    }
+                }
+            }
             if let mailbox = selectedMailbox {
                 ToolbarItem(placement: .topBarTrailing) { mailboxMenu(mailbox) }
             }
@@ -61,38 +83,38 @@ struct InboxView: View {
     }
 
     private var messageList: some View {
-        List {
-            if let mailbox = selectedMailbox {
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(mailbox.emailAddress).font(.headline)
-                        Text(syncLine(mailbox)).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let errorMessage {
-                        Text(errorMessage).font(.footnote).foregroundStyle(.red)
-                    }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                FilterChips(selection: $filter, options: [(.all, "All"), (.replies, "Replies"), (.autoReplies, "Auto-replies"), (.bounces, "Bounces")])
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                if let errorMessage {
+                    Text(errorMessage).font(.system(size: 13)).foregroundStyle(Ink.danger).padding(.horizontal, 16)
                 }
-            }
-            Section("Recent") {
                 if store.isLoadingFirstMessages {
                     HStack(spacing: 10) {
                         ProgressView()
-                        Text("Loading messages…").foregroundStyle(.secondary)
+                        Text("Loading messages…").foregroundStyle(Ink.muted)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                } else if messages.isEmpty {
-                    Text(isSyncing ? "Syncing…" : "No recent messages. Pull down to check for new mail.")
-                        .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 120)
+                } else if visibleMessages.isEmpty {
+                    Text(isSyncing ? "Syncing…" : (filter == .all ? "No recent messages. Pull down to check for new mail." : "Nothing here right now."))
+                        .font(.system(size: 15))
+                        .foregroundStyle(Ink.muted)
+                        .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
-                    ForEach(messages) { message in
+                    ForEach(visibleMessages) { message in
                         NavigationLink(value: OutreachRoute.message(mailboxId: message.mailboxId ?? selectedMailbox?.id ?? "", messageId: message.id)) {
                             MessageRow(message: message)
                         }
+                        .buttonStyle(.plain)
+                        Divider().padding(.leading, 34)
                     }
                 }
             }
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
-        .listStyle(.insetGrouped)
     }
 
     private func mailboxMenu(_ mailbox: MailboxSummary) -> some View {
@@ -137,14 +159,15 @@ struct InboxView: View {
         .accessibilityLabel("Inbox options")
     }
 
+    /// "ty@taliferro.tech · 8 min ago"
     private func syncLine(_ mailbox: MailboxSummary) -> String {
-        var parts = [mailbox.subtitle]
+        var parts = [mailbox.emailAddress]
         if store.isRefreshing || isSyncing {
             parts.append("Updating…")
         } else if let lastSyncAt = mailbox.lastSyncAt, let date = ISO8601DateFormatter.flexible(lastSyncAt) {
-            parts.append("Synced \(date.formatted(.relative(presentation: .named)))")
+            parts.append(date.formatted(.relative(presentation: .named)))
         }
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -154,41 +177,36 @@ private struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(message.unread == true ? OutreachTheme.accent : Color.clear)
+                .fill(message.unread == true ? Ink.blue : Color.clear)
                 .frame(width: 8, height: 8)
-                .padding(.top, 6)
+                .padding(.top, 7)
             VStack(alignment: .leading, spacing: 3) {
-                HStack {
+                HStack(alignment: .firstTextBaseline) {
                     Text(message.sender)
-                        .font(.subheadline.weight(message.unread == true ? .bold : .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
                     Spacer()
                     if let date = message.receivedDate {
-                        Text(date.formatted(.relative(presentation: .named)))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(date.shortAge).font(.system(size: 12)).foregroundStyle(Ink.muted)
                     }
                 }
                 Text(message.displaySubject)
-                    .font(.subheadline)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Ink.text)
                     .lineLimit(1)
-                if let preview = message.preview, !preview.isEmpty {
-                    Text(preview)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
                 HStack(spacing: 6) {
-                    if let classification = message.classification, !classification.isEmpty {
-                        Tag(text: classification.replacingOccurrences(of: "_", with: " ").capitalized)
-                    }
-                    if message.replied == true {
-                        Tag(text: "Replied")
-                    }
+                    TagPill(text: message.kind.label, tint: message.kind.tint)
+                    Text(message.summaryLine)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Ink.muted)
+                        .lineLimit(1)
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 

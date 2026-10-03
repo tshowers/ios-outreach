@@ -119,3 +119,16 @@ final class InboxStore: ObservableObject {
         }
     }
 }
+
+#if DEBUG
+extension InboxStore {
+    /// DesignGallery: a mailbox and its messages, no network.
+    func loadSample(mailbox: MailboxSummary, messages: [MailboxMessage]) {
+        mailboxes = [mailbox]
+        selectedMailboxId = mailbox.id
+        messagesByMailbox[mailbox.id] = messages
+        hasLoadedMailboxes = true
+        lastRefresh = Date()
+    }
+}
+#endif

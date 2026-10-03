@@ -1,23 +1,24 @@
 import SwiftUI
 
-/// Catalyst, as on the web: Stale Contacts (how many to email, with the
-/// stats), Send (the emailer, pausing on each of Maya's drafts) and History
-/// (each batch's sends, opens and clicks). No pasted HTML templates on iOS -
-/// every email is Maya's draft from the contact's relationship tip.
+/// Catalyst (design 4i-4k): Stale (who to email, with the stats and who's up
+/// next), Send (progress, Auto-send, and each of Maya's drafts to send or
+/// skip) and History (each run's sends, opens and clicks). No pasted HTML
+/// templates on iOS - every email is Maya's draft from the contact's
+/// relationship tip. Cyan throughout, the main action blue.
 struct CatalystView: View {
     @ObservedObject var store: CatalystStore
-    @State private var tab: CatalystTab = .stale
+    @State private var tab: CatalystTab
+
+    init(store: CatalystStore, tab: CatalystTab = .stale) {
+        self.store = store
+        _tab = State(initialValue: tab)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Catalyst", selection: $tab) {
-                ForEach(CatalystTab.allCases) { tab in
-                    Label(tab.title, systemImage: tab.symbol).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            PillSegments(selection: $tab, options: CatalystTab.allCases.map { ($0, $0.title) })
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
 
             Group {
                 if !store.hasLoaded {
@@ -32,7 +33,7 @@ struct CatalystView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(Ink.bg)
         .navigationTitle("Catalyst")
         .navigationBarTitleDisplayMode(.inline)
         // Don't reload under a running batch - it would reshuffle the queue.
@@ -40,10 +41,9 @@ struct CatalystView: View {
     }
 }
 
-private enum CatalystTab: String, CaseIterable, Identifiable {
+enum CatalystTab: CaseIterable, Hashable {
     case stale, send, history
 
-    var id: String { rawValue }
     var title: String {
         switch self {
         case .stale: return "Stale"
@@ -51,16 +51,11 @@ private enum CatalystTab: String, CaseIterable, Identifiable {
         case .history: return "History"
         }
     }
-    var symbol: String {
-        switch self {
-        case .stale: return "person.badge.clock"
-        case .send: return "paperplane"
-        case .history: return "clock.arrow.circlepath"
-        }
-    }
 }
 
-// MARK: - Stale Contacts
+private let cyan = Area.catalyst.tint
+
+// MARK: - Stale (4i)
 
 private struct CatalystStaleTab: View {
     @ObservedObject var store: CatalystStore
@@ -71,97 +66,148 @@ private struct CatalystStaleTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("STALE CONTACTS").font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                    Text("People you may have forgotten").font(.title2.bold())
-                    Text("The contacts who have gone the longest without a follow-up, so you can decide who deserves attention first.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
                 if store.queue.isEmpty {
-                    CatalystCard {
+                    SurfaceCard {
                         Text(store.errorMessage ?? "Nobody's waiting. Catalyst lists contacts with a first name, a company and an email address. Add some in Network and they'll show up here.")
-                            .font(.subheadline)
-                            .foregroundStyle(store.errorMessage == nil ? Color.secondary : Color.red)
+                            .font(.system(size: 15))
+                            .foregroundStyle(store.errorMessage == nil ? Ink.muted : Ink.danger)
                     }
                 } else {
-                    batchPicker
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                        CatalystStat(title: "Oldest gap", value: "\(store.oldestGap)", caption: "days since the stalest relationship was touched")
-                        CatalystStat(title: "Average gap", value: "\(store.averageGap)", caption: "days since contact across this batch")
-                        CatalystStat(title: "Queue ready", value: "\(store.batch.count)", caption: "contacts staged for Catalyst")
-                        CatalystStat(title: "Urgent backlog", value: "\(store.urgentBacklog)", caption: "contacts at 30+ days since the last touch", isAlert: store.urgentBacklog > 0)
-                    }
-                    Button(action: onContinue) {
-                        Text("Continue to Send")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(OutreachTheme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .foregroundStyle(.white)
-                    }
+                    chooser
+                    upNext
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
         }
         .refreshable { if !store.isRunning { await store.load() } }
-    }
-
-    private var batchPicker: some View {
-        CatalystCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Stepper(value: batchBinding, in: 1...store.batchLimit, step: 5) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text("Batch size").font(.headline)
-                        Text("\(min(store.batchSize, store.batchLimit))").font(.title3.monospacedDigit().bold())
+        .safeAreaInset(edge: .bottom) {
+            if !store.queue.isEmpty {
+                StickyActionBar {
+                    Button(action: onContinue) {
+                        Text("Continue with \(store.batch.count) →").frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.pillPrimary)
                 }
-                .disabled(store.isRunning)
-                HStack(spacing: 8) {
-                    ForEach(Self.presets.filter { $0 <= store.batchLimit }, id: \.self) { size in
-                        Button("\(size)") { store.batchSize = size }
-                            .buttonStyle(.bordered)
-                            .tint(store.batchSize == size ? OutreachTheme.accent : .secondary)
-                            .disabled(store.isRunning)
-                    }
-                }
-                Text("\(store.queue.count) contact\(store.queue.count == 1 ? "" : "s") waiting. Pick up to \(store.batchLimit).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var batchBinding: Binding<Int> {
-        Binding(
-            get: { min(store.batchSize, store.batchLimit) },
-            set: { store.batchSize = $0 }
-        )
+    private var chooser: some View {
+        TintCard(tint: cyan) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("People you may have forgotten")
+                        .font(.system(size: 22, weight: .bold))
+                        .tracking(-0.3)
+                    Text("\(store.queue.count) contact\(store.queue.count == 1 ? "" : "s") waiting. Pick up to \(store.batchLimit).")
+                        .font(.system(size: 14))
+                }
+                .foregroundStyle(cyan.foreground)
+
+                FlowChips(sizes: sizes, selected: min(store.batchSize, store.batchLimit), isDisabled: store.isRunning) { store.batchSize = $0 }
+
+                HStack(spacing: 10) {
+                    statTile("\(store.oldestGap) day\(store.oldestGap == 1 ? "" : "s")", "Oldest gap")
+                    statTile("\(store.urgentBacklog)", "30+ days untouched")
+                }
+            }
+        }
+    }
+
+    /// The presets that fit, plus "everyone" when fewer than 500 are waiting.
+    private var sizes: [Int] {
+        var sizes = Self.presets.filter { $0 < store.batchLimit }
+        sizes.append(store.batchLimit)
+        return sizes
+    }
+
+    private func statTile(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 22, weight: .bold)).foregroundStyle(Ink.text)
+            Text(label).font(.system(size: 12)).foregroundStyle(Ink.muted)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Ink.bg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var upNext: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Up next").font(.system(size: 15, weight: .bold))
+                Spacer()
+                Text("\(store.batch.count) staged").font(.system(size: 13)).foregroundStyle(Ink.muted)
+            }
+            .padding(.horizontal, 4)
+            ForEach(store.batch.prefix(50)) { contact in
+                HStack(spacing: 12) {
+                    InitialsBadge(name: contact.fullName, tint: cyan, size: 36)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(contact.fullName).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                        if let company = contact.companyName, !company.isEmpty {
+                            Text(company).font(.system(size: 12)).foregroundStyle(Ink.muted).lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Text("\(contact.daysSinceLastContact)d")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(contact.daysSinceLastContact >= 30 ? Ink.danger : Ink.text)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Ink.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            if store.batch.count > 50 {
+                Text("and \(store.batch.count - 50) more")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Ink.muted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
+            }
+        }
     }
 }
 
-private struct CatalystStat: View {
-    let title: String
-    let value: String
-    let caption: String
-    var isAlert = false
+/// Batch-size chips that wrap: the selected one solid cyan with dark text.
+private struct FlowChips: View {
+    let sizes: [Int]
+    let selected: Int
+    let isDisabled: Bool
+    let onSelect: (Int) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-            Text(value).font(.largeTitle.bold().monospacedDigit()).foregroundStyle(isAlert ? Color.orange : Color.primary)
-            Text(caption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { chips }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) { ForEach(sizes.prefix(3), id: \.self, content: chip) }
+                HStack(spacing: 8) { ForEach(sizes.dropFirst(3), id: \.self, content: chip) }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var chips: some View {
+        ForEach(sizes, id: \.self, content: chip)
+    }
+
+    private func chip(_ size: Int) -> some View {
+        let isSelected = size == selected
+        return Button("\(size)") { onSelect(size) }
+            .font(.system(size: 15, weight: .bold))
+            .frame(minWidth: 48)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .foregroundStyle(isSelected ? Color(hex: 0x0f1115) : Ink.text)
+            .background(isSelected ? cyan.solid : Ink.bg, in: Capsule())
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
-// MARK: - Send
+// MARK: - Send (4j)
 
 private struct CatalystSendTab: View {
     @ObservedObject var store: CatalystStore
@@ -169,29 +215,30 @@ private struct CatalystSendTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let status = store.status { statusCard(status) }
-                controls
-                if let notice = store.notice {
-                    Label(notice, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 12) {
                 if let error = store.errorMessage {
-                    Text(error).font(.footnote).foregroundStyle(.red)
+                    Text(error).font(.system(size: 13)).foregroundStyle(Ink.danger)
                 }
-                activity
-                CatalystCard {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("SIGNAL ENGINE").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-                        Text("Catalyst sends the first email. After that, TODD owns the thread and adapts the follow-up from opens, clicks and silence.")
-                            .font(.subheadline)
+                switch store.phase {
+                case .preview(let contact), .sending(let contact):
+                    progressStrip
+                    preview(contact)
+                default:
+                    progressCard
+                    autoSendRow
+                    if let notice = store.notice {
+                        Text(notice).font(.system(size: 13)).foregroundStyle(Ink.muted).padding(.horizontal, 4)
                     }
+                    TODDNote(label: "Signal Engine", text: "Catalyst sends the first email. After that, TODD owns the thread and adapts the follow-up from opens, clicks and silence.")
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) { actionBar }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -200,252 +247,262 @@ private struct CatalystSendTab: View {
         }
     }
 
-    private func statusCard(_ status: CatalystSendingStatus) -> some View {
-        CatalystCard {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Circle().fill(status.isReady ? Color.green : Color.orange).frame(width: 10, height: 10)
-                    Text(status.label).font(.headline)
-                }
-                Text(status.campaignHint).font(.subheadline).foregroundStyle(.secondary)
-                Text("Today's cap: \(status.capForToday) · Used: \(status.usedToday) · Remaining: \(status.remainingToday)")
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
+    private var total: Int { store.isRunning || store.totalCount > 0 ? store.totalCount : store.batch.count }
 
-    private var controls: some View {
-        CatalystCard {
-            VStack(alignment: .leading, spacing: 12) {
+    // The ring, with what's left.
+    private var progressCard: some View {
+        SurfaceCard(radius: 24, padding: 20) {
+            VStack(spacing: 18) {
+                statusTag
+                ZStack {
+                    Circle().stroke(Ink.surface2, lineWidth: 16)
+                    Circle()
+                        .trim(from: 0, to: total > 0 ? CGFloat(store.sentCount) / CGFloat(total) : 0)
+                        .stroke(cyan.solid, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeOut, value: store.sentCount)
+                    VStack(spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 0) {
+                            Text("\(store.sentCount)").font(.system(size: 52, weight: .bold)).tracking(-2)
+                            Text("/\(total)").font(.system(size: 20, weight: .semibold)).foregroundStyle(Ink.muted)
+                        }
+                        Text(phaseLine).font(.system(size: 13)).foregroundStyle(Ink.muted)
+                    }
+                    .monospacedDigit()
+                }
+                .frame(width: 180, height: 180)
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Email Catalyst").font(.headline)
-                        Text("Stalest contacts first.").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text(stateLabel)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.secondary.opacity(0.15), in: Capsule())
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        Task { await store.start() }
-                    } label: {
-                        Label("Start", systemImage: "envelope").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(OutreachTheme.accent)
-                    .disabled(!store.canStart)
-
-                    Button(role: .destructive) {
-                        store.stop()
-                    } label: {
-                        Label("Stop", systemImage: "nosign").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!store.isRunning)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        Task { await store.reloadQueue() }
-                    } label: {
-                        Label("Reload Queue", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!store.canReload)
-
-                    Button {
-                        Task { await store.loadSkipped() }
-                    } label: {
-                        Label("Load Skipped", systemImage: "list.bullet.indent").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!store.canLoadSkipped)
-                }
-                .font(.subheadline)
-
-                Toggle(isOn: Binding(get: { store.autoRun }, set: { store.setAutoRun($0) })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto")
-                        Text("Sends each email without stopping on the preview, while the app is open.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .tint(OutreachTheme.accent)
-
-                HStack(spacing: 16) {
-                    countLabel("Total", store.isRunning || store.totalCount > 0 ? store.totalCount : store.batch.count)
-                    countLabel("Sent", store.sentCount)
-                    countLabel("Remaining", store.remainingCount)
-                    countLabel("Skipped", store.skipped.count)
+                    figure("\(store.remainingCount > 0 ? store.remainingCount : (store.isRunning ? 0 : total - store.sentCount))", "Remaining")
+                    figure("\(store.skipped.count)", "Skipped")
+                    figure(store.status.map { "\($0.remainingToday)" } ?? "–", "Left today")
                 }
             }
+            .frame(maxWidth: .infinity)
         }
     }
 
-    private func countLabel(_ title: String, _ value: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text("\(value)").font(.subheadline.weight(.semibold).monospacedDigit())
+    /// The compact version above an email waiting on you.
+    private var progressStrip: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().stroke(Ink.surface2, lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: total > 0 ? CGFloat(store.sentCount) / CGFloat(total) : 0)
+                    .stroke(cyan.solid, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(store.sentCount) of \(total) sent").font(.system(size: 15, weight: .bold))
+                Text("\(store.remainingCount) left · \(store.skipped.count) skipped").font(.system(size: 12)).foregroundStyle(Ink.muted)
+            }
+            Spacer()
+            if store.autoRun { TagPill(text: "Auto-send", tint: cyan) }
         }
+        .padding(12)
+        .background(Ink.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private var stateLabel: String {
+    private var phaseLine: String {
         switch store.phase {
-        case .idle: return "Idle"
-        case .drafting: return "Drafting"
-        case .preview: return store.autoRun ? "Sending" : "Waiting on you"
-        case .sending: return "Sending"
-        case .finished: return "Done"
+        case .drafting(let contact): return "drafting \(contact.firstName)…"
+        case .finished: return "sent · done"
+        default: return "sent"
         }
     }
 
     @ViewBuilder
-    private var activity: some View {
-        switch store.phase {
-        case .idle:
-            CatalystCard {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Ready").font(.headline)
-                    Text("Tap Start to have Maya draft the first email. The queue pauses on each preview so you can edit, send or skip it.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        case .drafting(let contact):
-            CatalystCard {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Maya is drafting for \(contact.fullName)...").foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 60)
-            }
-        case .preview(let contact), .sending(let contact):
-            preview(contact)
-        case .finished:
-            CatalystCard {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Batch finished").font(.headline)
-                    Text("\(store.sentCount) sent\(store.skipped.isEmpty ? "" : ", \(store.skipped.count) skipped"). Signal Engine takes over the follow-ups. See History for opens and clicks.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
+    private var statusTag: some View {
+        if case .drafting = store.phase {
+            TagPill(text: "Maya is drafting", tint: .green, symbol: "sparkle")
+        } else if let status = store.status {
+            TagPill(text: "● \(status.label)", tint: status.isReady ? .green : .yellow)
         }
     }
 
+    private func figure(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(.system(size: 20, weight: .bold)).monospacedDigit()
+            Text(label).font(.system(size: 12)).foregroundStyle(Ink.muted)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var autoSendRow: some View {
+        Toggle(isOn: Binding(get: { store.autoRun }, set: { store.setAutoRun($0) })) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Auto-send").font(.system(size: 15, weight: .bold))
+                Text("Send each email without stopping on the preview, while the app is open.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Ink.muted)
+            }
+        }
+        .tint(cyan.solid)
+        .padding(16)
+        .background(Ink.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    // One of Maya's emails, waiting on you - laid out like a draft (4c).
     private func preview(_ contact: CatalystContact) -> some View {
-        let isSending = store.phase == .sending(contact)
-        return CatalystCard {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(contact.fullName).font(.title3.bold())
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                InitialsBadge(name: contact.fullName, tint: cyan, size: 44)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(contact.fullName).font(.system(size: 17, weight: .bold))
                     Text([contact.companyName, contact.email].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(contact.staleLabel)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(contact.daysSinceLastContact >= 30 ? .orange : OutreachTheme.accent)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Ink.muted)
+                        .lineLimit(1)
                 }
+                Spacer()
+                TagPill(text: "\(contact.daysSinceLastContact)d quiet", tint: cyan)
+            }
 
-                field("Subject") {
-                    TextField("Subject", text: $store.subject)
-                }
-                field("Message") {
-                    TextField("Message", text: $store.message, axis: .vertical)
-                        .lineLimit(8...30)
-                        .focused($isEditing)
-                }
-
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Subject", text: $store.subject, axis: .vertical)
+                    .font(.system(size: 17, weight: .bold))
+                Divider()
+                TextField("Message", text: $store.message, axis: .vertical)
+                    .font(.system(size: 15))
+                    .lineSpacing(3)
+                    .lineLimit(6...40)
+                    .focused($isEditing)
+                Divider()
                 HStack {
-                    Picker("Tone", selection: $store.tone) {
-                        ForEach(CatalystTone.allCases) { tone in Text(tone.label).tag(tone) }
+                    Menu {
+                        Picker("Tone", selection: $store.tone) {
+                            ForEach(CatalystTone.allCases) { tone in Text(tone.label).tag(tone) }
+                        }
+                    } label: {
+                        Label(store.tone.label, systemImage: "slider.horizontal.3")
                     }
-                    .pickerStyle(.menu)
                     Spacer()
                     Button {
                         Task { await store.redraft() }
                     } label: {
-                        Label("Redraft", systemImage: "sparkles")
+                        Label("Redraft", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .tint(OutreachTheme.accent)
                 }
-                .font(.subheadline)
+                .font(.system(size: 14, weight: .semibold))
+                .tint(Ink.blueInk)
+            }
+            .padding(16)
+            .background(Ink.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
 
-                Button {
-                    isEditing = false
-                    Task { await store.sendCurrent() }
-                } label: {
-                    Text(isSending ? "Sending..." : "Send to \(contact.firstName)")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(OutreachTheme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .foregroundStyle(.white)
-                }
-                .disabled(isSending)
-
-                HStack {
-                    Button("Skip") {
-                        isEditing = false
-                        Task { await store.skipCurrent() }
-                    }
-                    Spacer()
-                    Button("Send test to me") {
-                        Task { await store.sendTest() }
-                    }
-                }
-                .font(.subheadline)
-                .disabled(isSending)
+            if let notice = store.notice {
+                Text(notice).font(.system(size: 13)).foregroundStyle(Ink.muted)
             }
         }
     }
 
-    private func field(_ label: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-            content()
-                .padding(12)
-                .background(Color(.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.primary.opacity(0.15)))
+    @ViewBuilder
+    private var actionBar: some View {
+        switch store.phase {
+        case .preview(let contact), .sending(let contact):
+            let isSending = store.phase == .sending(contact)
+            StickyActionBar {
+                Button {
+                    isEditing = false
+                    Task { await store.sendCurrent() }
+                } label: {
+                    Label(isSending ? "Sending…" : "Send to \(contact.firstName)", systemImage: "paperplane").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.pillPrimary)
+                .disabled(isSending)
+                HStack(spacing: 8) {
+                    actionTile("Skip", symbol: "forward") { Task { await store.skipCurrent() } }
+                    actionTile("Test to me", symbol: "envelope") { Task { await store.sendTest() } }
+                    actionTile("Stop", symbol: "stop.circle", role: .destructive) { store.stop() }
+                }
+                .disabled(isSending)
+            }
+        case .drafting:
+            StickyActionBar {
+                Button(role: .destructive) { store.stop() } label: {
+                    Label("Stop", systemImage: "stop.circle").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.pill(.danger))
+            }
+        case .idle, .finished:
+            StickyActionBar {
+                Button {
+                    Task { await store.start() }
+                } label: {
+                    Label(store.phase == .finished ? "Start another batch" : "Start · Maya drafts the first", systemImage: "paperplane").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.pillPrimary)
+                .disabled(!store.canStart)
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await store.reloadQueue() }
+                    } label: {
+                        Label("Reload queue", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
+                    }
+                    .disabled(!store.canReload)
+                    Button {
+                        Task { await store.loadSkipped() }
+                    } label: {
+                        Text("Load skipped").frame(maxWidth: .infinity)
+                    }
+                    .disabled(!store.canLoadSkipped)
+                }
+                .buttonStyle(.pill(.secondary, height: 44))
+            }
         }
+    }
+
+    private func actionTile(_ title: String, symbol: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: .bold))
+            }
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .foregroundStyle(role == .destructive ? Ink.danger : Ink.text)
+            .background(Ink.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - History
+// MARK: - History (4k)
 
 private struct CatalystHistoryTab: View {
     @ObservedObject var store: CatalystStore
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Recent Catalyst runs with sent, open and click results.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 14) {
+                    legend("Opens", Ink.blue)
+                    legend("Clicks", Ink.violet)
+                }
+                .padding(.horizontal, 4)
                 if store.runs.isEmpty {
-                    CatalystCard {
+                    SurfaceCard {
                         Text("No runs yet. Each batch you start shows up here.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 15))
+                            .foregroundStyle(Ink.muted)
                     }
                 }
                 ForEach(store.runs) { run in
                     CatalystRunCard(run: run)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
         }
         .refreshable { await store.refreshHistory() }
         .task { await store.refreshHistory() }
+    }
+
+    private func legend(_ title: String, _ color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(title).font(.system(size: 13)).foregroundStyle(Ink.muted)
+        }
     }
 }
 
@@ -453,60 +510,54 @@ private struct CatalystRunCard: View {
     let run: CatalystRun
 
     var body: some View {
-        CatalystCard {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(run.name).font(.headline)
-                    Text(run.status.capitalized).font(.caption).foregroundStyle(.secondary)
-                    if let started = run.startedDate {
-                        Text("Started \(started.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let finished = run.completedDate {
-                        Text("Finished \(finished.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(title).font(.system(size: 15, weight: .bold))
+                    Text(subtitle).font(.system(size: 12)).foregroundStyle(Ink.muted)
                 }
-                Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                    GridRow {
-                        tile("Sent", "\(run.sentCount)")
-                        tile("Unique opens", "\(run.uniqueOpenedCount) · \(percent(run.openRate))")
-                    }
-                    GridRow {
-                        tile("Unique clicks", "\(run.uniqueClickedCount) · \(percent(run.clickRate))")
-                        tile("Queue", "\(run.queuedCount) queued")
-                    }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("\(run.sentCount)").font(.system(size: 22, weight: .bold)).monospacedDigit()
+                    Text("sent").font(.system(size: 11)).foregroundStyle(Ink.muted)
                 }
             }
+            bar(run.openRate, Ink.blue)
+            bar(run.clickRate, Ink.violet)
         }
+        .padding(16)
+        .background(Ink.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
-    private func percent(_ rate: Double) -> String {
-        "\(Int((rate * 100).rounded()))%"
+    /// "Stale Contacts · Sep 28" from "Stale Contacts 2026-09-28".
+    private var title: String {
+        let base = run.name.replacingOccurrences(of: #"\s*\d{4}-\d{2}-\d{2}$"#, with: "", options: .regularExpression)
+        guard let started = run.startedDate else { return run.name }
+        return "\(base) · \(started.formatted(.dateTime.month(.abbreviated).day()))"
     }
 
-    private func tile(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.subheadline.weight(.semibold).monospacedDigit())
+    private var subtitle: String {
+        let time = Date.FormatStyle(date: .omitted, time: .shortened)
+        guard let started = run.startedDate else { return run.status.capitalized }
+        if run.status == "active" { return "Active · started \(started.formatted(time))" }
+        if let finished = run.completedDate { return "\(run.status.capitalized) · \(started.formatted(time))–\(finished.formatted(time))" }
+        return run.status.capitalized
+    }
+
+    private func bar(_ rate: Double, _ color: Color) -> some View {
+        HStack(spacing: 10) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Ink.surface2)
+                    Capsule().fill(color).frame(width: geometry.size.width * min(max(rate, 0), 1))
+                }
+            }
+            .frame(height: 6)
+            Text("\(Int((rate * 100).rounded()))%")
+                .font(.system(size: 12, weight: .bold))
+                .monospacedDigit()
+                .frame(width: 36, alignment: .trailing)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.primary.opacity(0.12)))
-    }
-}
-
-// MARK: - Shared
-
-private struct CatalystCard<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
