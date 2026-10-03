@@ -45,7 +45,7 @@ struct NeedsYouView: View {
                         }
                     }
                 }
-                .listStyle(.plain)
+                .listStyle(.insetGrouped)
             }
         }
         .navigationTitle("Needs You")
@@ -68,31 +68,38 @@ struct NeedsYouRow: View {
     let item: NeedsYouItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(item.contactName).font(.headline)
-                Spacer()
-                if let date = item.repliedDate {
-                    Text(date, format: .relative(presentation: .named))
-                        .font(.caption)
+        HStack(alignment: .top, spacing: 12) {
+            NeedsYouAvatar(item: item)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(item.contactName).font(.headline).lineLimit(1)
+                    Spacer(minLength: 8)
+                    if let date = item.repliedDate {
+                        Text(date, format: .relative(presentation: .named))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !item.companyName.isEmpty {
+                    Text(item.companyName)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.top, -4)
+                }
+                HStack(spacing: 6) {
+                    ForEach(item.pills, id: \.label) { $0 }
+                }
+                if !item.listPreview.isEmpty {
+                    Text(item.listPreview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
-            if !item.companyName.isEmpty {
-                Text(item.companyName).font(.subheadline).foregroundStyle(.secondary)
-            }
-            Text(item.reasonLabel)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(OutreachTheme.accent)
-            let preview = item.replyText.isEmpty ? item.replySummary : item.replyText
-            if !preview.isEmpty {
-                Text(preview)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }

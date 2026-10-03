@@ -5,25 +5,21 @@ import SwiftUI
 /// mailbox switcher, Sync, and connecting another inbox. Reading is free;
 /// connecting and replying need the subscription (the backend checks).
 struct InboxView: View {
-    let apiClient: OutreachAPIClient
+    @ObservedObject var store: InboxStore
     let defaultEmail: String
     @Binding var path: [OutreachRoute]
 
-    @State private var mailboxes: [MailboxSummary] = []
-    @State private var selectedMailboxId: String?
-    @State private var messages: [MailboxMessage] = []
-    @State private var isLoading = true
-    @State private var isSyncing = false
-    @State private var errorMessage: String?
     @State private var isConfirmingDisconnect = false
 
-    private var selectedMailbox: MailboxSummary? {
-        mailboxes.first { $0.id == selectedMailboxId } ?? mailboxes.first
-    }
+    private var mailboxes: [MailboxSummary] { store.mailboxes }
+    private var selectedMailbox: MailboxSummary? { store.selectedMailbox }
+    private var messages: [MailboxMessage] { store.messages }
+    private var isSyncing: Bool { store.isSyncing }
+    private var errorMessage: String? { store.errorMessage }
 
     var body: some View {
         Group {
-            if isLoading && mailboxes.isEmpty {
+            if !store.hasLoadedMailboxes {
                 ProgressView()
             } else if mailboxes.isEmpty {
                 notConnected
@@ -38,10 +34,10 @@ struct InboxView: View {
                 ToolbarItem(placement: .topBarTrailing) { mailboxMenu(mailbox) }
             }
         }
-        .task { await load() }
-        .refreshable { await sync() }
+        .task { await store.refreshIfStale() }
+        .refreshable { await store.sync() }
         .confirmationDialog("Disconnect \(selectedMailbox?.emailAddress ?? "this inbox")?", isPresented: $isConfirmingDisconnect, titleVisibility: .visible) {
-            Button("Disconnect", role: .destructive) { Task { await disconnect() } }
+            Button("Disconnect", role: .destructive) { Task { await store.disconnect() } }
         } message: {
             Text("Outreach stops seeing replies from this inbox. You can connect it again any time.")
         }
@@ -78,8 +74,14 @@ struct InboxView: View {
                 }
             }
             Section("Recent") {
-                if messages.isEmpty {
-                    Text(isSyncing ? "Syncing..." : "No recent messages yet. Pull down to sync.")
+                if store.isLoadingFirstMessages {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading messages…").foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                } else if messages.isEmpty {
+                    Text(isSyncing ? "Syncing…" : "No recent messages. Pull down to check for new mail.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(messages) { message in
@@ -96,7 +98,7 @@ struct InboxView: View {
     private func mailboxMenu(_ mailbox: MailboxSummary) -> some View {
         Menu {
             Button {
-                Task { await sync() }
+                Task { await store.sync() }
             } label: {
                 Label(isSyncing ? "Syncing..." : "Sync now", systemImage: "arrow.clockwise")
             }
@@ -105,8 +107,7 @@ struct InboxView: View {
                 Section("Inboxes") {
                     ForEach(mailboxes) { box in
                         Button {
-                            selectedMailboxId = box.id
-                            Task { await loadMessages() }
+                            Task { await store.select(box.id) }
                         } label: {
                             Label(box.emailAddress, systemImage: box.id == mailbox.id ? "checkmark" : "tray")
                         }
@@ -114,7 +115,7 @@ struct InboxView: View {
                 }
                 if mailbox.isPrimary != true {
                     Button {
-                        Task { await makePrimary(mailbox) }
+                        Task { await store.makePrimary(mailbox) }
                     } label: {
                         Label("Make primary", systemImage: "star")
                     }
@@ -138,70 +139,12 @@ struct InboxView: View {
 
     private func syncLine(_ mailbox: MailboxSummary) -> String {
         var parts = [mailbox.subtitle]
-        if let lastSyncAt = mailbox.lastSyncAt, let date = ISO8601DateFormatter.flexible(lastSyncAt) {
+        if store.isRefreshing || isSyncing {
+            parts.append("Updating…")
+        } else if let lastSyncAt = mailbox.lastSyncAt, let date = ISO8601DateFormatter.flexible(lastSyncAt) {
             parts.append("Synced \(date.formatted(.relative(presentation: .named)))")
         }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
-    }
-
-    // MARK: - Loading
-
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            mailboxes = try await apiClient.fetchMailboxes()
-            if selectedMailboxId == nil || !mailboxes.contains(where: { $0.id == selectedMailboxId }) {
-                selectedMailboxId = (mailboxes.first { $0.isPrimary == true } ?? mailboxes.first)?.id
-            }
-            errorMessage = nil
-            await loadMessages()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func loadMessages() async {
-        guard let id = selectedMailbox?.id else { return }
-        do {
-            messages = try await apiClient.fetchMessages(mailboxId: id)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func sync() async {
-        guard let id = selectedMailbox?.id else { await load(); return }
-        isSyncing = true
-        defer { isSyncing = false }
-        do {
-            try await apiClient.syncMailbox(mailboxId: id)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        await load()
-    }
-
-    private func makePrimary(_ mailbox: MailboxSummary) async {
-        do {
-            try await apiClient.setPrimaryMailbox(mailboxId: mailbox.id)
-            await load()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func disconnect() async {
-        guard let id = selectedMailbox?.id else { return }
-        do {
-            try await apiClient.disconnectMailbox(mailboxId: id)
-            selectedMailboxId = nil
-            messages = []
-            await load()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 }
 

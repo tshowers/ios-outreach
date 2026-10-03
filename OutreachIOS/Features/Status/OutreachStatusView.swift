@@ -18,6 +18,10 @@ struct OutreachStatusView: View {
     @StateObject private var viewModel: OutreachStatusViewModel
     @StateObject private var needsYou: NeedsYouStore
     @StateObject private var drafts: DraftsStore
+    /// Owned here so a running batch survives leaving the Catalyst page.
+    @StateObject private var catalyst: CatalystStore
+    /// Fetched as soon as the dashboard loads, so Inbox opens with mail in it.
+    @StateObject private var inbox: InboxStore
     @ObservedObject var authService: AuthService
     @ObservedObject var awardsService: AwardsService
     let apiClient: OutreachAPIClient
@@ -29,8 +33,6 @@ struct OutreachStatusView: View {
     @State private var isShowingConnectInbox = false
     /// Inbox, messages and connecting are pushed pages (no sheets).
     @State private var path: [OutreachRoute] = []
-    /// Contacts emailed from Catalyst this session - hidden from its queue.
-    @State private var catalystSentIds: Set<String> = []
     @State private var isShowingLogoutConfirmation = false
     @State private var isOpeningWebHandoff = false
     @State private var webHandoffErrorMessage: String?
@@ -57,6 +59,8 @@ struct OutreachStatusView: View {
         _viewModel = StateObject(wrappedValue: OutreachStatusViewModel(apiClient: apiClient))
         _needsYou = StateObject(wrappedValue: NeedsYouStore(apiClient: apiClient))
         _drafts = StateObject(wrappedValue: DraftsStore(apiClient: apiClient))
+        _catalyst = StateObject(wrappedValue: CatalystStore(apiClient: apiClient))
+        _inbox = StateObject(wrappedValue: InboxStore(apiClient: apiClient))
     }
 
     var body: some View {
@@ -164,6 +168,9 @@ struct OutreachStatusView: View {
                 isShowingAccount = false
                 openRoute(url)
             }
+            // Alongside the dashboard's own loading, not after it: reading
+            // the mailbox takes a few seconds.
+            .task { await inbox.prefetch() }
             .task {
                 await PushService.shared.registerIfAllowed()
                 await needsYou.load()
@@ -206,11 +213,12 @@ struct OutreachStatusView: View {
             .navigationDestination(for: OutreachRoute.self) { route in
                 switch route {
                 case .inbox:
-                    InboxView(apiClient: apiClient, defaultEmail: authService.userEmail ?? "", path: $path)
+                    InboxView(store: inbox, defaultEmail: authService.userEmail ?? "", path: $path)
                 case .message(let mailboxId, let messageId):
                     MessageDetailView(apiClient: apiClient, mailboxId: mailboxId, messageId: messageId)
                 case .catalyst:
-                    CatalystView(apiClient: apiClient, path: $path, sentContactIds: $catalystSentIds)
+                    CatalystView(store: catalyst)
+                        .onAppear { catalyst.onSent = { Task { await checkAwards() } } }
                 case .activity:
                     ActivityView(apiClient: apiClient) { url in openRoute(url) }
                 case .needsYou:
@@ -223,14 +231,10 @@ struct OutreachStatusView: View {
                     DraftsView(store: drafts, path: $path)
                 case .draftDetail(let item):
                     DraftDetailView(item: item, store: drafts, path: $path)
-                case .catalystCompose(let contact):
-                    CatalystComposeView(apiClient: apiClient, contact: contact) { contactId in
-                        catalystSentIds.insert(contactId)
-                        Task { await checkAwards() }
-                    }
                 case .connect(let email, let provider):
                     ConnectMailboxView(apiClient: apiClient, email: email, provider: provider) {
                         Task { await checkAwards() }
+                        Task { await inbox.load() }
                         // Back to the inbox, which reloads and shows it.
                         Task {
                             try? await Task.sleep(for: .milliseconds(900))

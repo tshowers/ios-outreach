@@ -6,7 +6,6 @@ enum OutreachRoute: Hashable {
     case message(mailboxId: String, messageId: String)
     case connect(email: String, provider: MailProvider)
     case catalyst
-    case catalystCompose(CatalystContact)
     case activity
     case needsYou
     case needsYouDetail(NeedsYouItem)

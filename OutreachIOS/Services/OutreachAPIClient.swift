@@ -141,27 +141,58 @@ final class OutreachAPIClient {
 
     // MARK: - Catalyst (/mobile/outreach/catalyst/*)
 
-    func fetchCatalystQueue() async throws -> [CatalystContact] {
-        let url = config.apiBaseURL.appending(path: "mobile/outreach/catalyst/queue")
+    func fetchCatalystQueue(limit: Int) async throws -> [CatalystContact] {
+        let url = catalystURL("queue").appending(queryItems: [URLQueryItem(name: "limit", value: String(limit))])
         let data = try await authorizedRequest(method: "GET", url: url)
         return try decoder.decode(DataEnvelope<[CatalystContact]>.self, from: data).data
     }
 
+    func fetchCatalystSendingStatus() async throws -> CatalystSendingStatus {
+        let data = try await authorizedRequest(method: "GET", url: catalystURL("sending-status"))
+        return try decoder.decode(DataEnvelope<CatalystSendingStatus>.self, from: data).data
+    }
+
     func draftCatalystEmail(contactId: String, tone: CatalystTone) async throws -> CatalystDraft {
-        let url = config.apiBaseURL.appending(path: "mobile/outreach/catalyst/draft")
         let body = try encoder.encode(CatalystDraftRequest(contactId: contactId, tone: tone.rawValue))
-        let data = try await authorizedRequest(method: "POST", url: url, body: body)
+        let data = try await authorizedRequest(method: "POST", url: catalystURL("draft"), body: body)
         return try decoder.decode(DataEnvelope<CatalystDraft>.self, from: data).data
     }
 
     /// The server builds the email from its own records (recipient from the
     /// contact, sender from your account) - only the subject and body come
     /// from here.
-    func sendCatalystEmail(contactId: String, subject: String, html: String) async throws -> CatalystSendResult {
-        let url = config.apiBaseURL.appending(path: "mobile/outreach/catalyst/send")
-        let body = try encoder.encode(CatalystSendRequest(contactId: contactId, subject: subject, html: html))
-        let data = try await authorizedRequest(method: "POST", url: url, body: body)
+    func sendCatalystEmail(contactId: String, subject: String, html: String, runId: String?) async throws -> CatalystSendResult {
+        let body = try encoder.encode(CatalystSendRequest(contactId: contactId, subject: subject, html: html, catalystRunId: runId))
+        let data = try await authorizedRequest(method: "POST", url: catalystURL("send"), body: body)
         return (try? decoder.decode(CatalystSendResult.self, from: data)) ?? CatalystSendResult(scheduled: nil, queued: nil, message: nil)
+    }
+
+    /// The same email, sent only to you and marked [TEST].
+    func sendCatalystTest(contactId: String, subject: String, html: String) async throws {
+        let body = try encoder.encode(CatalystSendRequest(contactId: contactId, subject: subject, html: html, catalystRunId: nil))
+        _ = try await authorizedRequest(method: "POST", url: catalystURL("send-test"), body: body)
+    }
+
+    func fetchCatalystRuns() async throws -> [CatalystRun] {
+        let data = try await authorizedRequest(method: "GET", url: catalystURL("runs"))
+        return try decoder.decode(DataEnvelope<[CatalystRun]>.self, from: data).data
+    }
+
+    func createCatalystRun(contactIds: [String]) async throws -> CatalystRun {
+        let body = try encoder.encode(CatalystRunCreateRequest(contactIds: contactIds, plannedCount: contactIds.count))
+        let data = try await authorizedRequest(method: "POST", url: catalystURL("runs"), body: body)
+        return try decoder.decode(DataEnvelope<CatalystRun>.self, from: data).data
+    }
+
+    func finalizeCatalystRun(id: String, status: String, queuedCount: Int, skippedCount: Int) async throws {
+        let body = try encoder.encode(CatalystRunFinalizeRequest(status: status, queuedCount: queuedCount, skippedCount: skippedCount))
+        _ = try await authorizedRequest(method: "PATCH", url: catalystURL("runs", id), body: body)
+    }
+
+    private func catalystURL(_ components: String...) -> URL {
+        components.reduce(config.apiBaseURL.appending(path: "mobile/outreach/catalyst")) { url, component in
+            url.appending(path: component)
+        }
     }
 
     private func mailboxURL(_ components: String...) -> URL {

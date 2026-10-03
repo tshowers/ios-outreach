@@ -17,6 +17,10 @@ struct NeedsYouItem: Decodable, Identifiable, Hashable {
     let nextMove: String
     let mayaDraftSubject: String
     let mayaDraftBody: String
+    /// Optional so the app still reads items from a server without them.
+    let replyClean: String?
+    let replyKind: String?
+    let reasonKey: String?
 
     var id: String { contactId }
     var hasMayaDraft: Bool { !mayaDraftSubject.isEmpty && !mayaDraftBody.isEmpty }
